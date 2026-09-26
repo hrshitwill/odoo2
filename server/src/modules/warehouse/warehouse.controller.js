@@ -19,15 +19,19 @@ exports.getWarehouses = async (req, res, next) => {
   }
 };
 
-// @desc    Get all locations
+// @desc    Get all locations with optional type filter
 // @route   GET /api/warehouses/locations
 exports.getLocations = async (req, res, next) => {
   try {
-    const { type } = req.query;
+    const { type, warehouseId } = req.query;
     let query = {};
     if (type) query.type = type.toUpperCase();
+    if (warehouseId) query.warehouse = warehouseId;
 
-    const locations = await Location.find(query).populate('warehouse', 'name code');
+    // Ensure system locations exist
+    await ensureSystemLocations();
+
+    const locations = await Location.find(query).populate('warehouse', 'name code').sort({ type: 1, name: 1 });
     res.status(200).json({ success: true, count: locations.length, data: locations });
   } catch (error) {
     next(error);
@@ -38,7 +42,13 @@ exports.getLocations = async (req, res, next) => {
 // @route   POST /api/warehouses
 exports.createWarehouse = async (req, res, next) => {
   try {
-    const warehouse = await Warehouse.create(req.body);
+    const { name, code, address } = req.body;
+    const warehouse = await Warehouse.create({
+      name,
+      code: code.toUpperCase().trim(),
+      address,
+    });
+
     // Create default internal location for this warehouse
     await Location.create({
       name: `${warehouse.name} Stock`,
@@ -57,9 +67,32 @@ exports.createWarehouse = async (req, res, next) => {
 // @route   POST /api/warehouses/locations
 exports.createLocation = async (req, res, next) => {
   try {
-    const location = await Location.create(req.body);
+    const { name, code, warehouse, type } = req.body;
+    const location = await Location.create({
+      name,
+      code: code.toUpperCase().trim(),
+      warehouse: warehouse || null,
+      type: type || 'INTERNAL',
+    });
     res.status(201).json({ success: true, data: location });
   } catch (error) {
     next(error);
+  }
+};
+
+// Helper: Ensure essential default system locations exist
+const ensureSystemLocations = async () => {
+  const defaults = [
+    { name: 'Vendors / Suppliers', code: 'PARTNER/VENDOR', type: 'VENDOR' },
+    { name: 'Customers', code: 'PARTNER/CUSTOMER', type: 'CUSTOMER' },
+    { name: 'Inventory Loss / Scrap', code: 'VIRTUAL/SCRAP', type: 'INVENTORY_LOSS' },
+    { name: 'Main Warehouse Stock', code: 'WH1/STOCK', type: 'INTERNAL' },
+  ];
+
+  for (let def of defaults) {
+    const exists = await Location.findOne({ type: def.type, code: def.code });
+    if (!exists) {
+      await Location.create(def);
+    }
   }
 };

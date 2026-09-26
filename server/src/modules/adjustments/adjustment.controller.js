@@ -16,7 +16,17 @@ exports.createAdjustment = async (req, res, next) => {
       });
     }
 
-    // Get or create inventory loss location for balancing
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const location = await Location.findById(locationId);
+    if (!location) {
+      return res.status(404).json({ success: false, message: 'Location not found' });
+    }
+
+    // Get or create inventory loss/scrap location for balancing double-entry
     let lossLocation = await Location.findOne({ type: 'INVENTORY_LOSS' });
     if (!lossLocation) {
       lossLocation = await Location.create({
@@ -28,25 +38,28 @@ exports.createAdjustment = async (req, res, next) => {
 
     let quant = await StockQuant.findOne({ product: productId, location: locationId });
     const recordedQty = quant ? quant.quantity : 0;
-    const delta = countedQty - recordedQty; // Positive = gain, Negative = loss
+    const targetQty = Number(countedQty);
+    const delta = targetQty - recordedQty; // Positive = gain, Negative = loss
 
     if (delta === 0) {
       return res.status(200).json({
         success: true,
         message: 'Physical count matches recorded quantity. No adjustment needed.',
-        data: { recordedQty, countedQty, delta: 0 },
+        data: { recordedQty, countedQty: targetQty, delta: 0 },
       });
     }
 
-    // Update quant
+    // Update quant to exact counted quantity
     if (!quant) {
-      quant = new StockQuant({ product: productId, location: locationId, quantity: countedQty });
+      quant = new StockQuant({ product: productId, location: locationId, quantity: targetQty });
     } else {
-      quant.quantity = countedQty;
+      quant.quantity = targetQty;
     }
     await quant.save();
 
     // From and To locations based on gain or loss
+    // If loss (delta < 0): moves from physical location to inventory loss/scrap
+    // If gain (delta > 0): moves from inventory loss/found to physical location
     const fromLoc = delta < 0 ? locationId : lossLocation._id;
     const toLoc = delta < 0 ? lossLocation._id : locationId;
     const adjQty = Math.abs(delta);
@@ -60,18 +73,20 @@ exports.createAdjustment = async (req, res, next) => {
       fromLocation: fromLoc,
       toLocation: toLoc,
       quantity: adjQty,
-      performedBy: req.user._id,
-      notes: reason || `Inventory Count Adjustment: ${recordedQty} -> ${countedQty}`,
+      performedBy: req.user ? req.user._id : null,
+      notes: reason || `Inventory Count Adjustment: ${recordedQty} -> ${targetQty} (${delta > 0 ? '+' : ''}${delta})`,
     });
 
     res.status(201).json({
       success: true,
-      message: `Stock adjusted by ${delta > 0 ? '+' : ''}${delta}`,
+      message: `Stock adjusted by ${delta > 0 ? '+' : ''}${delta} ${product.uom}. New stock: ${targetQty} ${product.uom}`,
       data: {
         productId,
+        productName: product.name,
         locationId,
+        locationName: location.name,
         recordedQty,
-        countedQty,
+        countedQty: targetQty,
         delta,
         ledgerEntry,
       },

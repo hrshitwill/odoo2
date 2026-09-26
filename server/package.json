@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "seed": "node src/seed.js",
+    "test": "node tests/run-tests.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

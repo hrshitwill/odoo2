@@ -1,37 +1,66 @@
 const Product = require('../../models/Product');
 const StockQuant = require('../../models/StockQuant');
 const StockOperation = require('../../models/StockOperation');
+const Location = require('../../models/Location');
 
 // @desc    Get dashboard KPIs and metrics
 // @route   GET /api/dashboard/kpis
 exports.getDashboardKpis = async (req, res, next) => {
   try {
-    // 1. Total products count
-    const totalProducts = await Product.countDocuments();
+    const { warehouseId, locationId, category } = req.query;
 
-    // 2. Pending receipts (type: RECEIPT, status: in ['DRAFT', 'WAITING', 'READY'])
-    const pendingReceipts = await StockOperation.countDocuments({
-      type: 'RECEIPT',
-      status: { $in: ['DRAFT', 'WAITING', 'READY'] },
-    });
+    // 1. Total products count (optionally filtered by category)
+    let productQuery = {};
+    if (category && category !== 'ALL') {
+      productQuery.category = category;
+    }
+    const totalProducts = await Product.countDocuments(productQuery);
 
-    // 3. Pending deliveries (type: DELIVERY, status: in ['DRAFT', 'WAITING', 'READY'])
-    const pendingDeliveries = await StockOperation.countDocuments({
-      type: 'DELIVERY',
-      status: { $in: ['DRAFT', 'WAITING', 'READY'] },
-    });
+    // 2. Pending operations counts
+    let opQuery = {};
+    if (warehouseId || locationId) {
+      const locMatch = locationId || { $exists: true };
+      opQuery.$or = [{ sourceLocation: locMatch }, { destLocation: locMatch }];
+    }
 
-    // 4. Internal transfers scheduled
-    const scheduledTransfers = await StockOperation.countDocuments({
-      type: 'INTERNAL',
-      status: { $in: ['DRAFT', 'WAITING', 'READY'] },
-    });
+    const [pendingReceipts, pendingDeliveries, scheduledTransfers] = await Promise.all([
+      StockOperation.countDocuments({
+        ...opQuery,
+        type: 'RECEIPT',
+        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+      }),
+      StockOperation.countDocuments({
+        ...opQuery,
+        type: 'DELIVERY',
+        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+      }),
+      StockOperation.countDocuments({
+        ...opQuery,
+        type: 'INTERNAL',
+        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+      }),
+    ]);
 
-    // 5. Low stock items calculation
-    const products = await Product.find().select('minStockRule').lean();
+    // 3. Status breakdown across all operations
+    const statusCounts = await StockOperation.aggregate([
+      {
+        $group: {
+          _id: { type: '$type', status: '$status' },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // 4. Low stock and Out of stock items calculation
+    const products = await Product.find(productQuery).select('minStockRule category').lean();
+    const internalLocations = await Location.find({ type: 'INTERNAL' }).select('_id');
+    const internalLocIds = internalLocations.map((l) => l._id);
+
     const quants = await StockQuant.aggregate([
+      { $match: { location: { $in: internalLocIds } } },
       { $group: { _id: '$product', total: { $sum: '$quantity' } } },
     ]);
+
     const quantMap = {};
     quants.forEach((q) => {
       quantMap[q._id.toString()] = q.total;
@@ -39,21 +68,26 @@ exports.getDashboardKpis = async (req, res, next) => {
 
     let lowStockCount = 0;
     let outOfStockCount = 0;
+    let totalItemsInStock = 0;
+
     products.forEach((p) => {
       const stock = quantMap[p._id.toString()] || 0;
+      totalItemsInStock += stock;
       if (stock === 0) outOfStockCount++;
-      if (stock <= p.minStockRule) lowStockCount++;
+      if (stock <= (p.minStockRule || 0)) lowStockCount++;
     });
 
     res.status(200).json({
       success: true,
       data: {
         totalProducts,
+        totalItemsInStock,
         lowStockItems: lowStockCount,
         outOfStockItems: outOfStockCount,
         pendingReceipts,
         pendingDeliveries,
         scheduledTransfers,
+        statusBreakdown: statusCounts,
       },
     });
   } catch (error) {
