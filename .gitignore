@@ -17,6 +17,8 @@ dist/
 build/
 out/
 .vite/
+.next/
+*.zip
 
 # Logs
 logs/
