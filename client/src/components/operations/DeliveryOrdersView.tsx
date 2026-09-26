@@ -27,6 +27,11 @@ export const DeliveryOrdersView: React.FC = () => {
     createDelivery,
     advanceDeliveryStage,
     cancelDelivery,
+    startPicking,
+    confirmPacking,
+    submitDelivery,
+    approveDelivery,
+    rejectDelivery,
   } = useInventory();
 
   const isStaff = currentUser.role === 'warehouse_staff';
@@ -65,17 +70,15 @@ export const DeliveryOrdersView: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  const handleAdvance = (deliveryId: string, targetStage: DeliveryStage) => {
-    const success = advanceDeliveryStage(deliveryId, targetStage);
-    if (success && targetStage === 'done') {
-      try {
-        confetti({
-          particleCount: 40,
-          spread: 50,
-          origin: { y: 0.7 },
-        });
-      } catch (err) {}
-    }
+  const handleApprove = (deliveryId: string) => {
+    approveDelivery(deliveryId);
+    try {
+      confetti({
+        particleCount: 40,
+        spread: 50,
+        origin: { y: 0.7 },
+      });
+    } catch (err) {}
   };
 
   const getStageSteps = (stage: DeliveryStage) => {
@@ -98,25 +101,29 @@ export const DeliveryOrdersView: React.FC = () => {
             Delivery Orders
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Stage-driven outbound workflow: Pick items → Pack carton → Validate &amp; decrease stock
+            Stage-driven outbound workflow: Pick items → Pack carton → Submit for Manager Approval
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsModalOpen(true)}
-          className="btn-primary py-1.5 px-3 text-xs"
-        >
-          <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
-          <span>Create Delivery</span>
-        </button>
+        {!isStaff && (
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className="btn-primary py-1.5 px-3 text-xs"
+          >
+            <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
+            <span>Create Delivery</span>
+          </button>
+        )}
       </div>
 
       {/* Orders List */}
       <div className="space-y-3.5">
         {displayDeliveries.map((delivery) => {
-          const isDone = delivery.stage === 'done';
-          const isCancelled = delivery.status === 'cancelled';
+          const s = String(delivery.status || '').toLowerCase();
+          const isDone = delivery.stage === 'done' || s === 'completed';
+          const isCancelled = s === 'cancelled' || s === 'rejected';
+          const isAwaiting = s.includes('wait') || s.includes('submit') || delivery.stage === 'validate';
           const stages = getStageSteps(delivery.stage);
 
           return (
@@ -130,45 +137,92 @@ export const DeliveryOrdersView: React.FC = () => {
                   <span className="font-mono text-base font-semibold text-slate-900">
                     {delivery.deliveryNumber}
                   </span>
-                  <Badge status={delivery.stage} size="sm" />
+                  <Badge status={delivery.status} size="sm" />
                   <span className="text-xs text-slate-400">
-                    Tracking: {delivery.trackingNumber} · By {delivery.createdByName}
+                    Tracking: {delivery.trackingNumber} {delivery.createdByName ? `· By ${delivery.createdByName}` : ''}
                   </span>
                 </div>
 
                 {/* Stage Action Controls */}
                 <div className="flex items-center gap-2">
-                  {!isDone && !isCancelled && (
+                  {/* Staff Picking & Packing Controls */}
+                  {isStaff && !isDone && !isCancelled && !isAwaiting && (
                     <>
                       {delivery.stage === 'draft' || delivery.stage === 'pick' ? (
                         <button
                           type="button"
-                          onClick={() => handleAdvance(delivery.id, 'pack')}
-                          className="btn-primary py-1 px-2.5 text-xs"
+                          onClick={() => startPicking(delivery.id)}
+                          className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
                         >
                           <ClipboardList className="w-3.5 h-3.5 text-orange-400" strokeWidth={1.75} />
-                          <span>Advance to Pack</span>
+                          <span>Start Picking</span>
                         </button>
                       ) : delivery.stage === 'pack' ? (
-                        <button
-                          type="button"
-                          onClick={() => handleAdvance(delivery.id, 'validate')}
-                          className="btn-primary py-1 px-2.5 text-xs"
-                        >
-                          <Box className="w-3.5 h-3.5 text-orange-400" strokeWidth={1.75} />
-                          <span>Ready to Validate</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleAdvance(delivery.id, 'done')}
-                          className="btn-primary py-1 px-2.5 text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700"
-                        >
-                          <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                          <span>Validate &amp; Deduct Stock</span>
-                        </button>
-                      )}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => confirmPacking(delivery.id)}
+                            className="px-2.5 py-1.5 rounded bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 text-xs font-medium transition-colors cursor-pointer"
+                          >
+                            Confirm Packing
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => submitDelivery(delivery.id)}
+                            className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>Submit Delivery</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
 
+                  {/* Staff awaiting indicator */}
+                  {isStaff && isAwaiting && (
+                    <span className="px-2.5 py-1 text-xs font-mono font-medium rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Awaiting Manager Approval {delivery.submittedBy ? `(Submitted by ${delivery.submittedBy})` : ''}
+                    </span>
+                  )}
+
+                  {/* Manager Approval Controls */}
+                  {!isStaff && isAwaiting && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleApprove(delivery.id)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        <span>Approve Dispatch</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const reason = prompt('Rejection reason:', 'Damage observed during final packing');
+                          if (reason !== null) {
+                            rejectDelivery(delivery.id, reason);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs rounded transition-colors cursor-pointer"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+
+                  {/* Manager Direct Controls if not yet in approval queue */}
+                  {!isStaff && !isDone && !isCancelled && !isAwaiting && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => advanceDeliveryStage(delivery.id, 'done')}
+                        className="btn-primary py-1 px-2.5 text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700"
+                      >
+                        <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        <span>Approve Dispatch</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => cancelDelivery(delivery.id)}
@@ -182,7 +236,13 @@ export const DeliveryOrdersView: React.FC = () => {
                   {isDone && (
                     <span className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 font-medium">
                       <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      Dispatched ({formatDateTime(delivery.validatedAt || delivery.createdAt)})
+                      Dispatched &amp; Stock Deducted {delivery.approvedBy ? `(Approved by ${delivery.approvedBy})` : ''}
+                    </span>
+                  )}
+
+                  {isCancelled && (
+                    <span className="flex items-center gap-1 text-xs text-rose-800 bg-rose-50 px-2.5 py-1 rounded border border-rose-200 font-medium">
+                      Rejected {delivery.rejectionReason ? `· ${delivery.rejectionReason}` : ''}
                     </span>
                   )}
                 </div>

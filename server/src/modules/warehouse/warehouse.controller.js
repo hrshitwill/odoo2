@@ -1,11 +1,16 @@
 const Warehouse = require('../../models/Warehouse');
 const Location = require('../../models/Location');
 
-// @desc    Get all warehouses with their locations
+// @desc    Get all warehouses with their locations (scoped for staff)
 // @route   GET /api/warehouses
 exports.getWarehouses = async (req, res, next) => {
   try {
-    const warehouses = await Warehouse.find().lean();
+    let whQuery = {};
+    if (req.user && req.user.role === 'WAREHOUSE_STAFF' && req.user.warehouse) {
+      whQuery._id = req.user.warehouse;
+    }
+
+    const warehouses = await Warehouse.find(whQuery).lean();
     const locations = await Location.find().lean();
 
     const data = warehouses.map((wh) => ({
@@ -19,7 +24,7 @@ exports.getWarehouses = async (req, res, next) => {
   }
 };
 
-// @desc    Get all locations with optional type filter
+// @desc    Get all locations with optional type filter (scoped for staff)
 // @route   GET /api/warehouses/locations
 exports.getLocations = async (req, res, next) => {
   try {
@@ -27,6 +32,15 @@ exports.getLocations = async (req, res, next) => {
     let query = {};
     if (type) query.type = type.toUpperCase();
     if (warehouseId) query.warehouse = warehouseId;
+
+    if (req.user && req.user.role === 'WAREHOUSE_STAFF' && req.user.warehouse) {
+      // Allow assigned warehouse locations or external partner/virtual locations
+      query.$or = [
+        { warehouse: req.user.warehouse },
+        { warehouse: null },
+        { type: { $in: ['VENDOR', 'CUSTOMER', 'INVENTORY_LOSS'] } },
+      ];
+    }
 
     // Ensure system locations exist
     await ensureSystemLocations();

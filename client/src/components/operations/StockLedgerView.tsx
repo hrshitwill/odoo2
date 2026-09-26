@@ -18,17 +18,16 @@ import { StockMovementArrow } from '@/components/common/StockMovementArrow';
 import { formatDateTime } from '@/lib/utils';
 
 export const StockLedgerView: React.FC = () => {
-  const { ledger, scopedLedger, products, currentUser } = useInventory();
+  const { ledger, products, currentUser, staffActivity } = useInventory();
 
   const isStaff = currentUser.role === 'warehouse_staff';
-  const activeLedger = isStaff ? scopedLedger : ledger;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOperation, setSelectedOperation] = useState('all');
   const [selectedProduct, setSelectedProduct] = useState('all');
 
   const filteredEntries = useMemo(() => {
-    return activeLedger.filter((entry) => {
+    return ledger.filter((entry) => {
       const matchesSearch =
         !searchQuery ||
         entry.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -45,7 +44,7 @@ export const StockLedgerView: React.FC = () => {
 
       return matchesSearch && matchesOp && matchesProd;
     });
-  }, [activeLedger, searchQuery, selectedOperation, selectedProduct]);
+  }, [ledger, searchQuery, selectedOperation, selectedProduct]);
 
   const handleExportCSV = () => {
     const headers = [
@@ -90,21 +89,85 @@ export const StockLedgerView: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Staff View: MY ACTIVITY (No full ledger access)
+  if (isStaff) {
+    return (
+      <div className="space-y-6 pb-16 font-body">
+        {/* Staff Activity Header */}
+        <div className="border-b border-slate-200 pb-5">
+          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-mono font-semibold mb-1">
+            Personal Floor Log &bull; {currentUser.assignedWarehouseName || 'Main Central Hub'}
+          </div>
+          <h1 className="text-page-title text-slate-900">
+            MY ACTIVITY
+          </h1>
+          <p className="text-sm text-slate-600 mt-0.5">
+            Log of your submitted warehouse receipts, pick/pack deliveries, transfers, and physical counts. Official inventory updates only after Manager approval.
+          </p>
+        </div>
+
+        {/* Activity Stream */}
+        <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs max-w-3xl">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 font-mono">
+              Today&apos;s Submitted Operations ({currentUser.name})
+            </h2>
+            <span className="text-xs text-slate-400 font-mono">
+              {staffActivity.length} logged actions
+            </span>
+          </div>
+
+          <div className="space-y-3.5">
+            {staffActivity.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No activity logged yet for this shift.
+              </div>
+            ) : (
+              staffActivity.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-4 rounded-lg border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="font-mono text-xs font-bold text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 shrink-0">
+                      {item.time}
+                    </span>
+                    <div>
+                      <div className="font-semibold text-slate-900 text-sm">
+                        {item.action}
+                      </div>
+                      <div className="text-slate-500 font-mono text-[11px] mt-0.5">
+                        Ref #{item.reference} {item.details ? `· ${item.details}` : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <span className="px-2.5 py-1 rounded text-xs font-mono font-medium self-start sm:self-auto bg-amber-50 text-amber-800 border border-amber-200">
+                    {item.status}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Manager View: FULL STOCK LEDGER
   return (
     <div className="space-y-6 pb-16">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
           <div className="text-[11px] font-sans uppercase tracking-wider text-slate-500 font-semibold mb-1">
-            Audit Trail &amp; Compliance Register &bull; {isStaff ? (currentUser.assignedWarehouseName || 'Main Central Hub') : 'Corporate Scope'}
+            Audit Trail &amp; Compliance Register &bull; Corporate Scope
           </div>
           <h1 className="text-page-title text-slate-950">
             Master Stock Ledger
           </h1>
           <p className="text-sm text-slate-600 font-sans mt-0.5">
-            {isStaff
-              ? 'Immutable chronological register of stock movements involving your assigned warehouse facility.'
-              : 'Immutable chronological register of all inward, outward, and transfer stock adjustments across all warehouses.'}
+            Immutable chronological register of all inward, outward, and transfer stock adjustments across all warehouses.
           </p>
         </div>
 

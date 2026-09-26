@@ -25,6 +25,11 @@ const userSchema = new mongoose.Schema(
       enum: ['INVENTORY_MANAGER', 'WAREHOUSE_STAFF'],
       default: 'WAREHOUSE_STAFF',
     },
+    warehouse: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Warehouse',
+      default: null,
+    },
     resetPasswordOtp: String,
     resetPasswordOtpExpires: Date,
   },

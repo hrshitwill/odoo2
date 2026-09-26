@@ -33,8 +33,24 @@ const stockOperationSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['DRAFT', 'WAITING', 'READY', 'DONE', 'CANCELED'],
-      default: 'DRAFT',
+      enum: [
+        'READY',
+        'IN_PROGRESS',
+        'SUBMITTED',
+        'AWAITING_APPROVAL',
+        'APPROVED',
+        'REJECTED',
+        'COMPLETED',
+        'DRAFT',
+        'WAITING',
+        'DONE',
+        'CANCELED',
+      ],
+      default: 'READY',
+    },
+    warehouse: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Warehouse',
     },
     partner: {
       type: String,
@@ -52,9 +68,51 @@ const stockOperationSchema = new mongoose.Schema(
       required: true,
     },
     items: [stockOperationItemSchema],
+    stage: {
+      type: String,
+      enum: ['draft', 'pick', 'pack', 'validate', 'done', 'cancelled'],
+      default: 'draft',
+    },
+    systemQty: {
+      type: Number,
+    },
+    countedQty: {
+      type: Number,
+    },
+    difference: {
+      type: Number,
+    },
+    adjustmentReason: {
+      type: String,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+    },
+    submittedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    submittedAt: {
+      type: Date,
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    approvedAt: {
+      type: Date,
+    },
+    rejectedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    rejectedAt: {
+      type: Date,
+    },
+    rejectionReason: {
+      type: String,
+      default: '',
     },
     validatedAt: {
       type: Date,

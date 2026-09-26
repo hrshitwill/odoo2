@@ -1,6 +1,24 @@
 export type DocumentType = 'receipt' | 'delivery' | 'transfer' | 'adjustment';
 
-export type OperationStatus = 'draft' | 'waiting' | 'ready' | 'done' | 'cancelled';
+export type OperationStatus =
+  | 'ready'
+  | 'in_progress'
+  | 'submitted'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'rejected'
+  | 'completed'
+  | 'draft'
+  | 'waiting'
+  | 'done'
+  | 'cancelled'
+  | 'READY'
+  | 'IN_PROGRESS'
+  | 'SUBMITTED'
+  | 'AWAITING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'COMPLETED';
 
 export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
 
@@ -50,7 +68,7 @@ export interface Product {
   sku: string;
   barcode?: string;
   category: string;
-  unitOfMeasure: string; // 'kg' | 'units' | 'meters' | 'boxes' | 'liters'
+  unitOfMeasure: string;
   costPrice: number;
   sellingPrice: number;
   reorderPoint: number;
@@ -83,8 +101,15 @@ export interface Receipt {
   status: OperationStatus;
   notes?: string;
   createdAt: string;
-  validatedAt?: string;
   createdByName: string;
+  submittedBy?: string;
+  submittedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  validatedAt?: string;
 }
 
 export type DeliveryStage = 'draft' | 'pick' | 'pack' | 'validate' | 'done' | 'cancelled';
@@ -112,8 +137,15 @@ export interface DeliveryOrder {
   trackingNumber?: string;
   notes?: string;
   createdAt: string;
-  validatedAt?: string;
   createdByName: string;
+  submittedBy?: string;
+  submittedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  validatedAt?: string;
 }
 
 export interface InternalTransferItem {
@@ -136,20 +168,35 @@ export interface InternalTransfer {
   items: InternalTransferItem[];
   status: OperationStatus;
   scheduledDate: string;
-  completedAt?: string;
   createdByName: string;
+  submittedBy?: string;
+  submittedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  completedAt?: string;
   notes?: string;
 }
 
-export type AdjustmentReason = 'Damaged' | 'Inventory Count / Cycle' | 'Lost Goods' | 'Found Goods' | 'Theft' | 'Expiry' | 'Calibration Error';
+export type AdjustmentReason =
+  | 'Damaged'
+  | 'Inventory Count / Cycle'
+  | 'Lost Goods'
+  | 'Found Goods'
+  | 'Theft'
+  | 'Expiry'
+  | 'Calibration Error';
 
 export interface StockAdjustmentItem {
   productId: string;
   productName: string;
   sku: string;
-  locationId: string;
-  locationName: string;
+  locationId?: string;
+  locationName?: string;
   recordedQuantity: number;
+  systemQuantity?: number;
   physicalQuantity: number;
   difference: number;
   unitOfMeasure: string;
@@ -163,9 +210,16 @@ export interface StockAdjustment {
   items: StockAdjustmentItem[];
   reason: AdjustmentReason;
   notes?: string;
-  status: 'draft' | 'waiting' | 'done' | 'cancelled';
+  status: OperationStatus;
   createdAt: string;
   createdByName: string;
+  submittedBy?: string;
+  submittedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
   validatedByName?: string;
   validatedAt?: string;
 }
@@ -180,7 +234,7 @@ export interface StockLedgerEntry {
   referenceNumber: string;
   sourceLocationName: string;
   destinationLocationName: string;
-  quantityDelta: number; // positive for incoming, negative for outgoing, signed
+  quantityDelta: number;
   unitOfMeasure: string;
   resultingTotalStock: number;
   userName: string;
@@ -197,7 +251,7 @@ export interface ReorderingRule {
   warehouseName: string;
   minStock: number;
   maxStock: number;
-  reorderQuantity: number; // Suggested order qty
+  reorderQuantity: number;
   unitOfMeasure: string;
   isActive: boolean;
   leadTimeDays: number;
@@ -211,4 +265,29 @@ export interface InventoryCategory {
   code: string;
   description: string;
   productCount: number;
+}
+
+export interface PendingApprovalItem {
+  id: string;
+  operationType: 'Receipt' | 'Delivery' | 'Internal Transfer' | 'Adjustment';
+  documentId: string;
+  staffMember: string;
+  warehouse: string;
+  warehouseId: string;
+  quantity: string;
+  timestamp: string;
+  status: string;
+  details: string;
+  rejectionReason?: string;
+  rawOperation: Receipt | DeliveryOrder | InternalTransfer | StockAdjustment;
+}
+
+export interface StaffActivityItem {
+  id: string;
+  timestamp: string;
+  time: string;
+  action: string;
+  reference: string;
+  status: string;
+  details?: string;
 }

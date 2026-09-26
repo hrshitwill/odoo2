@@ -23,8 +23,14 @@ exports.getProducts = async (req, res, next) => {
 
     const products = await Product.find(query).sort({ createdAt: -1 }).lean();
 
-    // Get all internal location IDs to only sum actual physical stock
-    const internalLocations = await Location.find({ type: 'INTERNAL' }).select('_id');
+    // Get internal location IDs (optionally scoped to warehouse)
+    let locQuery = { type: 'INTERNAL' };
+    if (req.user && req.user.role === 'WAREHOUSE_STAFF' && req.user.warehouse) {
+      locQuery.warehouse = req.user.warehouse;
+    } else if (req.query.warehouse && req.query.warehouse !== 'all') {
+      locQuery.warehouse = req.query.warehouse;
+    }
+    const internalLocations = await Location.find(locQuery).select('_id');
     const internalLocIds = internalLocations.map((l) => l._id);
 
     const productIds = products.map((p) => p._id);

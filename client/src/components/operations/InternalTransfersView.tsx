@@ -24,6 +24,9 @@ export const InternalTransfersView: React.FC = () => {
     createInternalTransfer,
     validateTransfer,
     cancelTransfer,
+    reportTransferComplete,
+    approveTransfer,
+    rejectTransfer,
   } = useInventory();
 
   const isStaff = currentUser.role === 'warehouse_staff';
@@ -67,17 +70,15 @@ export const InternalTransfersView: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  const handleExecute = (transferId: string) => {
-    const success = validateTransfer(transferId);
-    if (success) {
-      try {
-        confetti({
-          particleCount: 40,
-          spread: 50,
-          origin: { y: 0.7 },
-        });
-      } catch (err) {}
-    }
+  const handleApprove = (transferId: string) => {
+    approveTransfer(transferId);
+    try {
+      confetti({
+        particleCount: 40,
+        spread: 50,
+        origin: { y: 0.7 },
+      });
+    } catch (err) {}
   };
 
   return (
@@ -92,25 +93,29 @@ export const InternalTransfersView: React.FC = () => {
             Internal Transfers
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Move stock inside company locations. Total company stock remains unchanged while location balances update.
+            Physical stock movements between locations. Movements require Manager sign-off before location balances update.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsModalOpen(true)}
-          className="btn-primary py-1.5 px-3 text-xs"
-        >
-          <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
-          <span>New Transfer</span>
-        </button>
+        {!isStaff && (
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className="btn-primary py-1.5 px-3 text-xs"
+          >
+            <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
+            <span>New Transfer</span>
+          </button>
+        )}
       </div>
 
       {/* Transfers List */}
       <div className="space-y-3.5">
         {displayTransfers.map((transfer) => {
-          const isDone = transfer.status === 'done';
-          const isCancelled = transfer.status === 'cancelled';
+          const s = String(transfer.status || '').toLowerCase();
+          const isDone = s === 'done' || s === 'completed';
+          const isCancelled = s === 'cancelled' || s === 'rejected';
+          const isAwaiting = s.includes('wait') || s.includes('submit');
           const item = transfer.items[0];
 
           return (
@@ -131,15 +136,62 @@ export const InternalTransfersView: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {!isDone && !isCancelled && (
+                  {/* Staff Action: Report Transfer Complete */}
+                  {isStaff && !isDone && !isCancelled && !isAwaiting && (
+                    <button
+                      type="button"
+                      onClick={() => reportTransferComplete(transfer.id)}
+                      className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Report Transfer Complete</span>
+                    </button>
+                  )}
+
+                  {/* Staff awaiting indicator */}
+                  {isStaff && isAwaiting && (
+                    <span className="px-2.5 py-1 text-xs font-mono font-medium rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Awaiting Manager Approval {transfer.submittedBy ? `(Submitted by ${transfer.submittedBy})` : ''}
+                    </span>
+                  )}
+
+                  {/* Manager Approval Controls */}
+                  {!isStaff && isAwaiting && (
                     <>
                       <button
                         type="button"
-                        onClick={() => handleExecute(transfer.id)}
-                        className="btn-primary py-1 px-2.5 text-xs bg-sky-700 hover:bg-sky-800 border-sky-700"
+                        onClick={() => handleApprove(transfer.id)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        <span>Approve Transfer</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const reason = prompt('Rejection reason:', 'Incorrect destination bin reported');
+                          if (reason !== null) {
+                            rejectTransfer(transfer.id, reason);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs rounded transition-colors cursor-pointer"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+
+                  {/* Manager direct approval if not yet submitted */}
+                  {!isStaff && !isDone && !isCancelled && !isAwaiting && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleApprove(transfer.id)}
+                        className="btn-primary py-1 px-2.5 text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700"
                       >
                         <Check className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        <span>Validate Transfer</span>
+                        <span>Approve Transfer</span>
                       </button>
                       <button
                         type="button"
@@ -150,10 +202,17 @@ export const InternalTransfersView: React.FC = () => {
                       </button>
                     </>
                   )}
+
                   {isDone && (
                     <span className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 font-medium">
                       <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      Completed ({formatDateTime(transfer.completedAt || transfer.scheduledDate)})
+                      Location Stock Moved {transfer.approvedBy ? `(Approved by ${transfer.approvedBy})` : ''}
+                    </span>
+                  )}
+
+                  {isCancelled && (
+                    <span className="flex items-center gap-1 text-xs text-rose-800 bg-rose-50 px-2.5 py-1 rounded border border-rose-200 font-medium">
+                      Rejected {transfer.rejectionReason ? `· ${transfer.rejectionReason}` : ''}
                     </span>
                   )}
                 </div>

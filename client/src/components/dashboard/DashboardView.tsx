@@ -14,8 +14,14 @@ import {
   Plus,
   Scan,
   ArrowRight,
+  ShieldCheck,
+  Check,
+  X,
+  Eye,
+  FileCheck,
 } from 'lucide-react';
 import { useInventory } from '@/context/InventoryContext';
+import { PendingApprovalItem } from '@/types/inventory';
 import { StockMovementArrow } from '@/components/common/StockMovementArrow';
 import { Badge } from '@/components/common/Badge';
 import { CalibratedMeter, OperationalHeatmap } from '@/components/common/CapacityMeter';
@@ -44,9 +50,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     warehouses,
     categories,
     products,
+    pendingApprovals,
+    approvePendingOperation,
+    rejectPendingOperation,
   } = useInventory();
 
   const [filterDocType, setFilterDocType] = useState<string>('all');
+  const [approvalFilter, setApprovalFilter] = useState<string>('all');
+  const [reviewingItem, setReviewingItem] = useState<PendingApprovalItem | null>(null);
+  const [rejectionModalOpen, setRejectionModalOpen] = useState<boolean>(false);
+  const [rejectionReason, setRejectionReason] = useState<string>('');
+
+  const filteredApprovals = useMemo(() => {
+    if (approvalFilter === 'all') return pendingApprovals;
+    return pendingApprovals.filter((item) => {
+      if (approvalFilter === 'Receipts') return item.operationType === 'Receipt';
+      if (approvalFilter === 'Deliveries') return item.operationType === 'Delivery';
+      if (approvalFilter === 'Transfers') return item.operationType === 'Internal Transfer';
+      if (approvalFilter === 'Adjustments') return item.operationType === 'Adjustment';
+      return true;
+    });
+  }, [pendingApprovals, approvalFilter]);
 
   const recentMovements = useMemo(() => {
     return ledger.slice(0, 8);
@@ -55,6 +79,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const attentionItems = useMemo(() => {
     return lowStockAlerts.slice(0, 4);
   }, [lowStockAlerts]);
+
+  const handleApprove = (item: PendingApprovalItem) => {
+    approvePendingOperation(item);
+    setReviewingItem(null);
+  };
+
+  const handleReject = () => {
+    if (!reviewingItem) return;
+    rejectPendingOperation(reviewingItem, rejectionReason || 'Discrepancy found during verification');
+    setRejectionModalOpen(false);
+    setReviewingItem(null);
+    setRejectionReason('');
+  };
 
   return (
     <div className="space-y-7 pb-16 font-body">
@@ -173,6 +210,117 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Scheduled moves
           </div>
         </div>
+      </div>
+
+      {/* 2.5 PENDING APPROVALS (Manager Authority & Control Queue) */}
+      <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-amber-500/10 border border-amber-300 flex items-center justify-center text-amber-700">
+              <ShieldCheck className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 font-mono">
+                Authority &amp; Control
+              </div>
+              <h2 className="text-base font-bold text-slate-900 font-display flex items-center gap-2">
+                PENDING APPROVALS
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-mono">
+                  {pendingApprovals.length} Operations Awaiting Approval
+                </span>
+              </h2>
+            </div>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-slate-400 mr-1 font-medium">Filter:</span>
+            {['all', 'Receipts', 'Deliveries', 'Transfers', 'Adjustments'].map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setApprovalFilter(filter)}
+                className={`px-2.5 py-1 rounded text-xs transition-colors border font-medium cursor-pointer ${
+                  approvalFilter === filter
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {filter === 'all' ? 'All' : filter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Requests List */}
+        {filteredApprovals.length === 0 ? (
+          <div className="py-8 text-center bg-slate-50/50 rounded border border-dashed border-slate-200">
+            <CircleCheck className="w-6 h-6 text-emerald-600 mx-auto mb-1.5" strokeWidth={1.75} />
+            <p className="text-xs font-medium text-slate-700">All submitted warehouse operations have been processed.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Physical intake and movements require manager sign-off before inventory is mutated.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500 text-[11px] uppercase tracking-wider bg-slate-50/80 font-mono">
+                  <th className="py-2.5 px-3 font-semibold">Operation</th>
+                  <th className="py-2.5 px-3 font-semibold">Document ID</th>
+                  <th className="py-2.5 px-3 font-semibold">Staff Member</th>
+                  <th className="py-2.5 px-3 font-semibold">Warehouse</th>
+                  <th className="py-2.5 px-3 font-semibold">Quantity</th>
+                  <th className="py-2.5 px-3 font-semibold">Timestamp</th>
+                  <th className="py-2.5 px-3 font-semibold">Status</th>
+                  <th className="py-2.5 px-3 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredApprovals.map((req) => (
+                  <tr key={req.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-3">
+                      <span className="font-semibold text-slate-900">{req.operationType}</span>
+                      <div className="text-[11px] text-slate-500 truncate max-w-xs">{req.details}</div>
+                    </td>
+                    <td className="py-3 px-3 font-mono font-medium text-slate-800">
+                      {req.documentId}
+                    </td>
+                    <td className="py-3 px-3 text-slate-700">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-mono flex items-center justify-center font-bold">
+                          {req.staffMember.split(' ').map(n => n[0]).join('')}
+                        </span>
+                        <span>{req.staffMember}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-slate-600 font-mono text-[11px]">
+                      {req.warehouse}
+                    </td>
+                    <td className="py-3 px-3 font-mono font-bold text-slate-900">
+                      {req.quantity}
+                    </td>
+                    <td className="py-3 px-3 text-slate-500 text-[11px] font-mono">
+                      {req.timestamp}
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                        {req.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setReviewingItem(req)}
+                        className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-2xs transition-colors cursor-pointer"
+                      >
+                        Review
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* 3. Capacity & Telemetry Gauges */}
@@ -454,6 +602,273 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Manager Review Modal */}
+      {reviewingItem && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl max-w-lg w-full overflow-hidden animate-in fade-in duration-150">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-orange-400" />
+                <div>
+                  <h3 className="font-display font-bold text-sm tracking-tight">
+                    {reviewingItem.operationType === 'Adjustment'
+                      ? 'STOCK ADJUSTMENT REQUEST'
+                      : `OPERATIONAL REVIEW · ${reviewingItem.operationType.toUpperCase()}`}
+                  </h3>
+                  <p className="text-[11px] text-slate-300 font-mono">
+                    Document #{reviewingItem.documentId}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewingItem(null)}
+                className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded text-amber-900 flex items-start gap-2">
+                <TriangleAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold">Authority &amp; Control Check:</span> Official inventory quantities remain unaffected until approved by an Inventory Manager.
+                </div>
+              </div>
+
+              {/* Specific Details depending on Operation */}
+              {reviewingItem.operationType === 'Receipt' && (
+                <div className="space-y-2.5 bg-slate-50 p-3.5 rounded border border-slate-200">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Document ID:</span>
+                    <strong className="font-mono text-slate-900">#{reviewingItem.documentId}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Supplier:</span>
+                    <strong className="text-slate-900">
+                      {(reviewingItem.rawOperation as any)?.supplierName || 'Apex Industrial Corp'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Location:</span>
+                    <strong className="text-slate-900 font-mono">
+                      {(reviewingItem.rawOperation as any)?.destinationLocationName || 'Receiving Bay A'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Expected:</span>
+                    <strong className="font-mono text-slate-700">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.quantityExpected || 100} units
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Received (Counted Intake):</span>
+                    <strong className="font-mono text-emerald-700 font-bold">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.quantityReceived || reviewingItem.quantity}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500">Submitted By:</span>
+                    <span className="font-medium text-slate-800">{reviewingItem.staffMember}</span>
+                  </div>
+                </div>
+              )}
+
+              {reviewingItem.operationType === 'Delivery' && (
+                <div className="space-y-2.5 bg-slate-50 p-3.5 rounded border border-slate-200">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Delivery ID:</span>
+                    <strong className="font-mono text-slate-900">#{reviewingItem.documentId}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Customer:</span>
+                    <strong className="text-slate-900">
+                      {(reviewingItem.rawOperation as any)?.customerName || 'Acme Global Logistics'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Source Location:</span>
+                    <strong className="text-slate-900 font-mono">
+                      {(reviewingItem.rawOperation as any)?.sourceLocationName || 'Outbound Staging Bay B'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Picked Quantity:</span>
+                    <strong className="font-mono text-slate-800">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.quantityPicked || 10}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Packed Quantity:</span>
+                    <strong className="font-mono text-emerald-700 font-bold">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.quantityPacked || reviewingItem.quantity}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500">Submitted By:</span>
+                    <span className="font-medium text-slate-800">{reviewingItem.staffMember}</span>
+                  </div>
+                </div>
+              )}
+
+              {reviewingItem.operationType === 'Internal Transfer' && (
+                <div className="space-y-2.5 bg-slate-50 p-3.5 rounded border border-slate-200">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Transfer ID:</span>
+                    <strong className="font-mono text-slate-900">#{reviewingItem.documentId}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Product:</span>
+                    <strong className="text-slate-900">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.productName || 'Heavy Industrial Bolts'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Transfer Quantity:</span>
+                    <strong className="font-mono text-slate-900 font-bold">
+                      {reviewingItem.quantity}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Source:</span>
+                    <strong className="font-mono text-slate-800">
+                      {(reviewingItem.rawOperation as any)?.sourceLocationName || 'Receiving Bay A'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Destination:</span>
+                    <strong className="font-mono text-slate-800">
+                      {(reviewingItem.rawOperation as any)?.destinationLocationName || 'Production Zone B'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500">Staff Member:</span>
+                    <span className="font-medium text-slate-800">{reviewingItem.staffMember}</span>
+                  </div>
+                </div>
+              )}
+
+              {reviewingItem.operationType === 'Adjustment' && (
+                <div className="space-y-2.5 bg-slate-50 p-3.5 rounded border border-slate-200">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Adjustment ID:</span>
+                    <strong className="font-mono text-slate-900">#{reviewingItem.documentId}</strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Product:</span>
+                    <strong className="text-slate-900">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.productName || 'Industrial Bolts'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">System Quantity:</span>
+                    <strong className="font-mono text-slate-700">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.systemQuantity ?? 100} units
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Physical Count:</span>
+                    <strong className="font-mono text-slate-900 font-bold">
+                      {(reviewingItem.rawOperation as any)?.items?.[0]?.physicalQuantity ?? 97} units
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Difference:</span>
+                    <strong className="font-mono text-rose-600 font-bold">
+                      {reviewingItem.quantity}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Reason:</span>
+                    <span className="capitalize font-medium text-amber-800">
+                      {(reviewingItem.rawOperation as any)?.reason || 'Damaged'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500">Submitted By:</span>
+                    <span className="font-medium text-slate-800">{reviewingItem.staffMember}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setRejectionModalOpen(true)}
+                  className="px-3.5 py-2 rounded bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-medium transition-colors cursor-pointer"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApprove(reviewingItem)}
+                  className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>
+                    {reviewingItem.operationType === 'Receipt' && 'Approve Receipt'}
+                    {reviewingItem.operationType === 'Delivery' && 'Approve Dispatch'}
+                    {reviewingItem.operationType === 'Internal Transfer' && 'Approve Transfer'}
+                    {reviewingItem.operationType === 'Adjustment' && 'Approve Adjustment'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rejection Confirmation Modal */}
+      {rejectionModalOpen && reviewingItem && (
+        <div className="fixed inset-0 z-60 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl max-w-md w-full p-5 space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2.5 text-rose-700">
+              <TriangleAlert className="w-5 h-5 shrink-0" />
+              <h3 className="font-display font-bold text-sm">
+                Reject Operation #{reviewingItem.documentId}
+              </h3>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Official inventory will remain unchanged. Please provide a reason for rejecting this operation submitted by {reviewingItem.staffMember}.
+            </p>
+
+            <div>
+              <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                Rejection Reason:
+              </label>
+              <textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="e.g. Discrepancy during physical intake, damaged items, incorrect lot tag..."
+                className="w-full text-xs p-2.5 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-slate-900 min-h-[80px]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRejectionModalOpen(false)}
+                className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleReject}
+                className="px-3.5 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium cursor-pointer"
+              >
+                Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

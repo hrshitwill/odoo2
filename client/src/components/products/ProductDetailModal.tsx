@@ -31,7 +31,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onClose,
   onNavigate,
 }) => {
-  const { getTotalStockForProduct, getAvailableStockForProduct, ledger } = useInventory();
+  const { getTotalStockForProduct, getAvailableStockForProduct, ledger, currentUser } = useInventory();
+  const isStaff = currentUser.role === 'warehouse_staff';
   const [isPrintOpen, setIsPrintOpen] = useState(false);
 
   if (!product) return null;
@@ -226,17 +227,19 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
           {/* Footer Actions */}
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onNavigate('receipts');
-              }}
-              className="btn-secondary py-1.5 px-3 text-xs"
-            >
-              <ArrowDownToLine className="w-3.5 h-3.5 text-orange-600" strokeWidth={1.75} />
-              <span>Create Receipt</span>
-            </button>
+            {!isStaff && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onNavigate('receipts');
+                }}
+                className="btn-secondary py-1.5 px-3 text-xs"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5 text-orange-600" strokeWidth={1.75} />
+                <span>Create Receipt</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -246,7 +249,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               className="btn-secondary py-1.5 px-3 text-xs"
             >
               <ArrowRightLeft className="w-3.5 h-3.5 text-sky-600" strokeWidth={1.75} />
-              <span>Transfer Stock</span>
+              <span>{isStaff ? 'Execute Transfer' : 'Transfer Stock'}</span>
             </button>
             <button
               type="button"
@@ -257,7 +260,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               className="btn-primary py-1.5 px-3 text-xs"
             >
               <ClipboardPenLine className="w-3.5 h-3.5 text-orange-400" strokeWidth={1.75} />
-              <span>Stock Adjustment</span>
+              <span>{isStaff ? 'Submit Count' : 'Stock Adjustment'}</span>
             </button>
           </div>
         </div>

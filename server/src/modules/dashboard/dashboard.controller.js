@@ -23,21 +23,25 @@ exports.getDashboardKpis = async (req, res, next) => {
       opQuery.$or = [{ sourceLocation: locMatch }, { destLocation: locMatch }];
     }
 
-    const [pendingReceipts, pendingDeliveries, scheduledTransfers] = await Promise.all([
+    const [pendingReceipts, pendingDeliveries, scheduledTransfers, pendingApprovals] = await Promise.all([
       StockOperation.countDocuments({
         ...opQuery,
         type: 'RECEIPT',
-        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+        status: { $in: ['DRAFT', 'WAITING', 'READY', 'IN_PROGRESS'] },
       }),
       StockOperation.countDocuments({
         ...opQuery,
         type: 'DELIVERY',
-        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+        status: { $in: ['DRAFT', 'WAITING', 'READY', 'IN_PROGRESS'] },
       }),
       StockOperation.countDocuments({
         ...opQuery,
         type: 'INTERNAL',
-        status: { $in: ['DRAFT', 'WAITING', 'READY'] },
+        status: { $in: ['DRAFT', 'WAITING', 'READY', 'IN_PROGRESS'] },
+      }),
+      StockOperation.countDocuments({
+        ...opQuery,
+        status: { $in: ['AWAITING_APPROVAL', 'WAITING'] },
       }),
     ]);
 
@@ -87,6 +91,7 @@ exports.getDashboardKpis = async (req, res, next) => {
         pendingReceipts,
         pendingDeliveries,
         scheduledTransfers,
+        pendingApprovals,
         statusBreakdown: statusCounts,
       },
     });

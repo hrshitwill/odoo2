@@ -28,7 +28,6 @@ import { Product } from '@/types/inventory';
 import { Menu, X } from 'lucide-react';
 
 const MANAGER_ONLY_TABS: NavigationTab[] = [
-  'products',
   'categories',
   'reordering_rules',
   'warehouse_settings',

@@ -47,7 +47,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onSelectTab,
   onOpenScanner,
 }) => {
-  const { kpis, scopedKpis, scopedReceipts, scopedDeliveries, scopedTransfers, currentUser, switchUserRole } = useInventory();
+  const { kpis, scopedKpis, scopedReceipts, scopedDeliveries, scopedTransfers, scopedLowStockAlerts, currentUser, switchUserRole } = useInventory();
   const { logout } = useAuth();
 
   const isStaff = currentUser.role === 'warehouse_staff';
@@ -66,25 +66,26 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const allNavGroups = [
     {
-      group: 'OVERVIEW',
+      group: 'WORK QUEUE',
       items: [
         {
           id: 'overview' as NavigationTab,
-          label: 'Overview',
+          label: isStaff ? "Today's Work Queue" : 'Overview',
           icon: LayoutDashboard,
           badge: null,
         },
       ],
     },
     {
-      group: 'MASTER DATA',
-      managerOnly: true,
+      group: isStaff ? 'STOCK VISIBILITY' : 'MASTER DATA',
       items: [
         {
           id: 'products' as NavigationTab,
-          label: 'Products',
+          label: isStaff ? 'Warehouse Stock' : 'Products',
           icon: Package,
-          badge: kpis.lowStockCount > 0 ? `${kpis.lowStockCount}` : null,
+          badge: (isStaff ? scopedLowStockAlerts.length : kpis.lowStockCount) > 0 
+            ? `${isStaff ? scopedLowStockAlerts.length : kpis.lowStockCount}` 
+            : null,
           badgeVariant: 'warning',
         },
         {
@@ -92,12 +93,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           label: 'Categories',
           icon: Tags,
           badge: null,
+          managerOnly: true,
         },
         {
           id: 'reordering_rules' as NavigationTab,
           label: 'Reordering Rules',
           icon: RotateCcw,
           badge: null,
+          managerOnly: true,
         },
       ],
     },
@@ -106,34 +109,34 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       items: [
         {
           id: 'receipts' as NavigationTab,
-          label: 'Receipts',
+          label: isStaff ? 'Assigned Receipts' : 'Receipts',
           icon: ArrowDownToLine,
           badge: pendingReceiptsCount > 0 ? `${pendingReceiptsCount}` : null,
           badgeVariant: 'accent',
         },
         {
           id: 'delivery_orders' as NavigationTab,
-          label: 'Delivery Orders',
+          label: isStaff ? 'Deliveries & Picking' : 'Delivery Orders',
           icon: ArrowUpFromLine,
           badge: pendingDeliveriesCount > 0 ? `${pendingDeliveriesCount}` : null,
           badgeVariant: 'neutral',
         },
         {
           id: 'internal_transfers' as NavigationTab,
-          label: 'Internal Transfers',
+          label: isStaff ? 'Physical Transfers' : 'Internal Transfers',
           icon: ArrowRightLeft,
           badge: scheduledTransfersCount > 0 ? `${scheduledTransfersCount}` : null,
           badgeVariant: 'neutral',
         },
         {
           id: 'adjustments' as NavigationTab,
-          label: 'Adjustments',
+          label: isStaff ? 'Physical Counts' : 'Adjustments',
           icon: ClipboardPenLine,
           badge: null,
         },
         {
           id: 'move_history' as NavigationTab,
-          label: 'Move History',
+          label: isStaff ? 'My Activity' : 'Stock Ledger',
           icon: History,
           badge: null,
         },
@@ -170,9 +173,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     },
   ];
 
-  const navGroups = isStaff
-    ? allNavGroups.filter((g) => !g.managerOnly)
-    : allNavGroups;
+  const navGroups = allNavGroups
+    .filter((g) => !(isStaff && g.managerOnly))
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((item) => !(isStaff && (item as any).managerOnly)),
+    }));
 
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen shrink-0 select-none">

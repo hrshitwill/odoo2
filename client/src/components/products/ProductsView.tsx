@@ -38,7 +38,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     getTotalStockForProduct,
     getAvailableStockForProduct,
     addProduct,
+    currentUser,
   } = useInventory();
+
+  const isStaff = currentUser.role === 'warehouse_staff';
+  const effectiveWhId = isStaff ? (currentUser.warehouseId || 'wh-main') : selectedWarehouseId;
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -89,9 +93,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       }
 
       let matchesWarehouse = true;
-      if (selectedWarehouseId !== 'all') {
+      if (effectiveWhId !== 'all') {
         matchesWarehouse = (prod.locationStock || []).some(
-          (ls) => ls.warehouseId === selectedWarehouseId && ls.quantity > 0
+          (ls) => ls.warehouseId === effectiveWhId && ls.quantity > 0
         );
       }
 
@@ -102,7 +106,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
     searchQuery,
     selectedCategory,
     selectedStatus,
-    selectedWarehouseId,
+    effectiveWhId,
     getTotalStockForProduct,
   ]);
 
@@ -137,13 +141,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
           <div className="text-metadata uppercase tracking-wider text-slate-400 font-medium">
-            Master Data
+            {isStaff ? 'Warehouse Floor Visibility' : 'Master Data'}
           </div>
           <h1 className="text-page-title">
-            Products
+            {isStaff ? 'Warehouse Stock' : 'Products'}
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {filteredProducts.length} of {products.length} products indexed
+            {isStaff
+              ? `Stock inventory for ${currentUser.assignedWarehouseName || 'Main Central Hub'}. Report physical count discrepancies to Manager.`
+              : `${filteredProducts.length} of ${products.length} products indexed across all warehouses`}
           </p>
         </div>
 
@@ -159,14 +165,16 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setIsNewModalOpen(true)}
-            className="btn-primary py-1.5 px-3 text-xs"
-          >
-            <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
-            <span>Create Product</span>
-          </button>
+          {!isStaff && (
+            <button
+              type="button"
+              onClick={() => setIsNewModalOpen(true)}
+              className="btn-primary py-1.5 px-3 text-xs"
+            >
+              <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
+              <span>Create Product</span>
+            </button>
+          )}
         </div>
       </div>
 

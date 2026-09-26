@@ -28,6 +28,9 @@ export const ReceiptsView: React.FC = () => {
     createReceipt,
     validateReceipt,
     cancelReceipt,
+    confirmPhysicalIntake,
+    approveReceipt,
+    rejectReceipt,
   } = useInventory();
 
   const isStaff = currentUser.role === 'warehouse_staff';
@@ -97,21 +100,25 @@ export const ReceiptsView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsModalOpen(true)}
-          className="btn-primary py-1.5 px-3 text-xs"
-        >
-          <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
-          <span>Create Receipt</span>
-        </button>
+        {!isStaff && (
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className="btn-primary py-1.5 px-3 text-xs"
+          >
+            <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
+            <span>Create Receipt</span>
+          </button>
+        )}
       </div>
 
       {/* Receipts List */}
       <div className="space-y-3.5">
         {displayReceipts.map((receipt) => {
-          const isDone = receipt.status === 'done';
-          const isCancelled = receipt.status === 'cancelled';
+          const s = String(receipt.status || '').toLowerCase();
+          const isDone = s === 'done' || s === 'completed';
+          const isCancelled = s === 'cancelled' || s === 'rejected';
+          const isAwaiting = s.includes('wait') || s.includes('submit');
 
           return (
             <div
@@ -126,35 +133,88 @@ export const ReceiptsView: React.FC = () => {
                   </span>
                   <Badge status={receipt.status} size="sm" />
                   <span className="text-xs text-slate-400">
-                    {formatDateTime(receipt.createdAt)} · By {receipt.createdByName}
+                    {formatDateTime(receipt.createdAt)} {receipt.createdByName ? `· By ${receipt.createdByName}` : ''}
                   </span>
                 </div>
 
-                {/* Validation Actions */}
+                {/* Role-Specific Validation & Approval Actions */}
                 <div className="flex items-center gap-2">
-                  {!isDone && !isCancelled && (
+                  {/* Staff Action: Confirm Physical Intake */}
+                  {isStaff && !isDone && !isCancelled && !isAwaiting && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        confirmPhysicalIntake(receipt.id);
+                      }}
+                      className="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowDownToLine className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Confirm Physical Intake</span>
+                    </button>
+                  )}
+
+                  {/* Staff awaiting indicator */}
+                  {isStaff && isAwaiting && (
+                    <span className="px-2.5 py-1 text-xs font-mono font-medium rounded bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Awaiting Manager Approval {receipt.submittedBy ? `(Submitted by ${receipt.submittedBy})` : ''}
+                    </span>
+                  )}
+
+                  {/* Manager Approval Actions */}
+                  {!isStaff && isAwaiting && (
                     <>
                       <button
                         type="button"
-                        onClick={() => handleValidate(receipt.id)}
-                        className="btn-primary py-1 px-2.5 text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700"
+                        onClick={() => {
+                          approveReceipt(receipt.id);
+                          try {
+                            confetti({ particleCount: 35, spread: 45, origin: { y: 0.7 } });
+                          } catch (e) {}
+                        }}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
                         <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        <span>Validate (Increase Stock)</span>
+                        <span>Approve Receipt</span>
                       </button>
                       <button
                         type="button"
-                        onClick={() => cancelReceipt(receipt.id)}
-                        className="px-2 py-1 bg-white border border-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-500 text-xs rounded transition-colors"
+                        onClick={() => {
+                          const reason = prompt('Rejection reason (discrepancy notes):', 'Pallet count mismatch during intake');
+                          if (reason !== null) {
+                            rejectReceipt(receipt.id, reason);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs rounded transition-colors cursor-pointer"
                       >
-                        Cancel
+                        Reject
                       </button>
                     </>
                   )}
+
+                  {/* Manager Direct Intake (if not submitted by staff yet) */}
+                  {!isStaff && !isDone && !isCancelled && !isAwaiting && (
+                    <button
+                      type="button"
+                      onClick={() => handleValidate(receipt.id)}
+                      className="btn-primary py-1 px-2.5 text-xs bg-emerald-700 hover:bg-emerald-800 border-emerald-700"
+                    >
+                      <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Approve Receipt</span>
+                    </button>
+                  )}
+
                   {isDone && (
                     <span className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 font-medium">
                       <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      Stock Increased ({formatDateTime(receipt.validatedAt || receipt.createdAt)})
+                      Official Inventory Updated {receipt.approvedBy ? `(Approved by ${receipt.approvedBy})` : ''}
+                    </span>
+                  )}
+
+                  {isCancelled && (
+                    <span className="flex items-center gap-1 text-xs text-rose-800 bg-rose-50 px-2.5 py-1 rounded border border-rose-200 font-medium">
+                      <CircleX className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      Rejected {receipt.rejectionReason ? `· ${receipt.rejectionReason}` : ''}
                     </span>
                   )}
                 </div>

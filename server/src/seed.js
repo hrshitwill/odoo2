@@ -17,8 +17,9 @@ const StockLedger = require('./models/StockLedger');
 
 const seedData = async () => {
   try {
-    console.log('[Seeder] Connecting to MongoDB Atlas...');
-    await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+    console.log('[Seeder] Connecting to MongoDB...');
+    const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/stocksense';
+    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 15000 });
     console.log('[Seeder] Connected successfully!');
 
     // 1. Clean existing data
@@ -33,8 +34,28 @@ const seedData = async () => {
       StockLedger.deleteMany({}),
     ]);
 
-    // 2. Seed Users
-    console.log('[Seeder] Seeding users...');
+    // 2. Seed Warehouses
+    console.log('[Seeder] Seeding warehouses and facilities...');
+    const [mainHub, prodWarehouse, eastWarehouse] = await Promise.all([
+      Warehouse.create({
+        name: 'Main Central Hub',
+        code: 'WH-MAIN',
+        address: 'Terminal 4, North Logistics Corridor',
+      }),
+      Warehouse.create({
+        name: 'Production Facility Warehouse',
+        code: 'WH-PROD',
+        address: 'Building 12, Advanced Manufacturing Zone',
+      }),
+      Warehouse.create({
+        name: 'East Buffer Warehouse',
+        code: 'WH-EAST',
+        address: 'Pier 9, Logistics Harbor',
+      }),
+    ]);
+
+    // 3. Seed Users
+    console.log('[Seeder] Seeding test users (Alex Morgan & Marcus Miller)...');
     const salt = await bcrypt.genSalt(10);
     const [managerPass, staffPass] = await Promise.all([
       bcrypt.hash('admin123', salt),
@@ -42,170 +63,205 @@ const seedData = async () => {
     ]);
 
     const manager = await User.create({
-      name: 'Harshit (Manager)',
+      name: 'Alex Morgan',
       email: 'manager@stocksense.com',
       password: managerPass,
       role: 'INVENTORY_MANAGER',
+      warehouse: null,
     });
 
     const staff = await User.create({
-      name: 'John Staff',
+      name: 'Marcus Miller',
       email: 'staff@stocksense.com',
       password: staffPass,
       role: 'WAREHOUSE_STAFF',
-    });
-
-    // 3. Seed Warehouse
-    console.log('[Seeder] Seeding warehouse and locations...');
-    const warehouse = await Warehouse.create({
-      name: 'Central Warehouse',
-      code: 'WH1',
-      address: 'Plot 42, Logistics Park, Zone A',
+      warehouse: mainHub._id,
     });
 
     // 4. Seed Locations
-    const mainStore = await Location.create({
-      name: 'Main Store',
-      code: 'WH1/STOCK',
-      warehouse: warehouse._id,
-      type: 'INTERNAL',
-    });
-
-    const productionFloor = await Location.create({
-      name: 'Production Floor',
-      code: 'WH1/PROD',
-      warehouse: warehouse._id,
-      type: 'INTERNAL',
-    });
-
-    const vendorLoc = await Location.create({
-      name: 'Vendors / Suppliers',
-      code: 'PARTNER/VENDOR',
-      type: 'VENDOR',
-    });
-
-    const customerLoc = await Location.create({
-      name: 'Customers',
-      code: 'PARTNER/CUSTOMER',
-      type: 'CUSTOMER',
-    });
-
-    const scrapLoc = await Location.create({
-      name: 'Inventory Loss / Scrap',
-      code: 'VIRTUAL/SCRAP',
-      type: 'INVENTORY_LOSS',
-    });
+    console.log('[Seeder] Seeding locations...');
+    const [receivingBayA, productionZoneB, heavyRackA, standardRackB, outboundStaging, prodFloor, scrapLoc, vendorLoc, customerLoc] =
+      await Promise.all([
+        Location.create({
+          name: 'Receiving Bay A',
+          code: 'WH-MAIN/REC-A',
+          warehouse: mainHub._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Production Zone B',
+          code: 'WH-MAIN/PROD-B',
+          warehouse: mainHub._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Heavy Rack A (Raw)',
+          code: 'WH-MAIN/RACK-A',
+          warehouse: mainHub._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Standard Rack B (Components)',
+          code: 'WH-MAIN/RACK-B',
+          warehouse: mainHub._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Outbound Dispatch Bay',
+          code: 'WH-MAIN/STG-01',
+          warehouse: mainHub._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Assembly Floor Area',
+          code: 'WH-PROD/FLR-01',
+          warehouse: prodWarehouse._id,
+          type: 'INTERNAL',
+        }),
+        Location.create({
+          name: 'Inventory Loss / Scrap',
+          code: 'VIRTUAL/SCRAP',
+          type: 'INVENTORY_LOSS',
+        }),
+        Location.create({
+          name: 'Apex Industrial Corp / Vendors',
+          code: 'PARTNER/VENDOR',
+          type: 'VENDOR',
+        }),
+        Location.create({
+          name: 'AeroStructures Engineering / Customers',
+          code: 'PARTNER/CUSTOMER',
+          type: 'CUSTOMER',
+        }),
+      ]);
 
     // 5. Seed Products
     console.log('[Seeder] Seeding products...');
-    const [steel, frames, screws] = await Promise.all([
+    const [steel, bolts, chairs] = await Promise.all([
       Product.create({
         name: 'Steel Rods',
-        sku: 'STL-ROD-01',
+        sku: 'STL-001',
         category: 'Raw Materials',
         uom: 'kg',
-        minStockRule: 20,
-        maxStockRule: 200,
-        costPrice: 45,
-        description: 'High tensile steel rods for industrial framing',
+        minStockRule: 50,
+        maxStockRule: 300,
+        costPrice: 4.25,
+        description: 'High tensile carbon steel rods (Grade 40 Industrial)',
       }),
       Product.create({
-        name: 'Wooden Frames',
-        sku: 'WOD-FRM-02',
+        name: 'Industrial Bolts',
+        sku: 'BLT-M8',
+        category: 'Fasteners & Hardware',
+        uom: 'units',
+        minStockRule: 500,
+        maxStockRule: 2500,
+        costPrice: 0.35,
+        description: 'Grade 8.8 zinc plated hex screws M8x40mm',
+      }),
+      Product.create({
+        name: 'Ergonomic Executive Task Chairs',
+        sku: 'CHR-ERG',
         category: 'Finished Goods',
-        uom: 'Units',
-        minStockRule: 10,
-        maxStockRule: 50,
-        costPrice: 120,
-        description: 'Pre-assembled solid wood structural frames',
-      }),
-      Product.create({
-        name: 'Hex Screws M8',
-        sku: 'SCR-HEX-03',
-        category: 'Hardware',
-        uom: 'pcs',
-        minStockRule: 100,
-        maxStockRule: 1000,
-        costPrice: 1.5,
-        description: 'Grade 8.8 zinc plated hex screws',
+        uom: 'units',
+        minStockRule: 15,
+        maxStockRule: 100,
+        costPrice: 85.0,
+        description: 'Commercial ergonomic office task chairs with lumbar reinforcement',
       }),
     ]);
 
     // 6. Seed Initial Stock Levels (StockQuants)
-    console.log('[Seeder] Seeding on-hand quantities...');
+    console.log('[Seeder] Seeding on-hand quantities (Steel Rods = 42 kg, Industrial Bolts = 100)...');
     await Promise.all([
-      StockQuant.create({ product: steel._id, location: mainStore._id, quantity: 100 }),
-      StockQuant.create({ product: frames._id, location: mainStore._id, quantity: 25 }),
-      StockQuant.create({ product: screws._id, location: mainStore._id, quantity: 500 }),
+      StockQuant.create({ product: steel._id, location: heavyRackA._id, quantity: 42 }),
+      StockQuant.create({ product: bolts._id, location: standardRackB._id, quantity: 100 }),
+      StockQuant.create({ product: chairs._id, location: outboundStaging._id, quantity: 28 }),
     ]);
 
-    // 7. Seed Initial Move History in StockLedger
-    console.log('[Seeder] Seeding stock ledger audit log...');
+    // 7. Seed Initial Stock Ledger Audit Trail
+    console.log('[Seeder] Seeding stock ledger audit trail...');
     await Promise.all([
       StockLedger.create({
-        reference: 'INIT-STL-ROD-01',
+        reference: 'INIT-STL-001',
         product: steel._id,
         fromLocation: vendorLoc._id,
-        toLocation: mainStore._id,
+        toLocation: heavyRackA._id,
+        quantity: 42,
+        performedBy: manager._id,
+        notes: 'Initial inventory baseline count',
+      }),
+      StockLedger.create({
+        reference: 'INIT-BLT-M8',
+        product: bolts._id,
+        fromLocation: vendorLoc._id,
+        toLocation: standardRackB._id,
         quantity: 100,
         performedBy: manager._id,
-        notes: 'Initial inventory count',
-      }),
-      StockLedger.create({
-        reference: 'INIT-WOD-FRM-02',
-        product: frames._id,
-        fromLocation: vendorLoc._id,
-        toLocation: mainStore._id,
-        quantity: 25,
-        performedBy: manager._id,
-        notes: 'Initial inventory count',
-      }),
-      StockLedger.create({
-        reference: 'INIT-SCR-HEX-03',
-        product: screws._id,
-        fromLocation: vendorLoc._id,
-        toLocation: mainStore._id,
-        quantity: 500,
-        performedBy: manager._id,
-        notes: 'Initial inventory count',
+        notes: 'Initial inventory baseline count',
       }),
     ]);
 
-    // 8. Seed Sample Operations (Pending Receipt, Delivery, and Transfer)
-    console.log('[Seeder] Seeding pending operations...');
+    // 8. Seed Operations matching the prompt specifications
+    console.log('[Seeder] Seeding sample operations (REC-1042, DEL-1048, TRF-018, ADJ-019)...');
     await Promise.all([
+      // Receipt REC-1042: Ready for Staff Confirm Physical Intake
       StockOperation.create({
-        reference: 'REC-100001',
+        reference: 'REC-1042',
         type: 'RECEIPT',
         status: 'READY',
-        partner: 'Apex Steel Industries Ltd',
+        warehouse: mainHub._id,
+        partner: 'Apex Industrial Corp',
         sourceLocation: vendorLoc._id,
-        destLocation: mainStore._id,
-        items: [{ product: steel._id, demandQty: 50, doneQty: 50 }],
+        destLocation: receivingBayA._id,
+        items: [{ product: steel._id, demandQty: 100, doneQty: 100 }],
         createdBy: manager._id,
-        notes: 'Scheduled shipment of raw steel',
+        notes: 'Inbound shipment #BL-8921: Apex Industrial Corp',
       }),
+      // Delivery DEL-1048: Ready for Staff Pick & Pack
       StockOperation.create({
-        reference: 'DEL-200001',
+        reference: 'DEL-1048',
         type: 'DELIVERY',
         status: 'READY',
-        partner: 'Metro Interiors Corp',
-        sourceLocation: mainStore._id,
+        warehouse: mainHub._id,
+        partner: 'AeroStructures Engineering',
+        sourceLocation: heavyRackA._id,
         destLocation: customerLoc._id,
-        items: [{ product: frames._id, demandQty: 5, doneQty: 5 }],
+        items: [{ product: steel._id, demandQty: 10, doneQty: 10 }],
+        stage: 'pack',
         createdBy: manager._id,
-        notes: 'Customer order shipment #892',
+        notes: 'Priority dispatch order for AeroStructures Engineering',
       }),
+      // Transfer TRF-018: Receiving Bay A -> Production Zone B
       StockOperation.create({
-        reference: 'INT-300001',
+        reference: 'TRF-018',
         type: 'INTERNAL',
         status: 'READY',
+        warehouse: mainHub._id,
         partner: 'Internal Workshop',
-        sourceLocation: mainStore._id,
-        destLocation: productionFloor._id,
-        items: [{ product: steel._id, demandQty: 20, doneQty: 20 }],
+        sourceLocation: receivingBayA._id,
+        destLocation: productionZoneB._id,
+        items: [{ product: steel._id, demandQty: 25, doneQty: 25 }],
+        createdBy: manager._id,
+        notes: 'Relocating raw material to Production Zone B',
+      }),
+      // Adjustment ADJ-019: Marcus Miller submitted physical count (-3 damaged) -> AWAITING APPROVAL
+      StockOperation.create({
+        reference: 'ADJ-019',
+        type: 'ADJUSTMENT',
+        status: 'AWAITING_APPROVAL',
+        warehouse: mainHub._id,
+        partner: 'Cycle Audit',
+        sourceLocation: standardRackB._id,
+        destLocation: scrapLoc._id,
+        items: [{ product: bolts._id, demandQty: 3, doneQty: 3 }],
+        systemQty: 100,
+        countedQty: 97,
+        difference: -3,
+        adjustmentReason: 'Damaged',
+        submittedBy: staff._id,
+        submittedAt: new Date(Date.now() - 30 * 60 * 1000), // 30 mins ago
         createdBy: staff._id,
-        notes: 'Relocating raw material to production floor',
+        notes: 'Forklift impact damaged bottom carton: 3 bolts broken',
       }),
     ]);
 
@@ -213,8 +269,9 @@ const seedData = async () => {
     console.log('✅ StockSense Database Seeded Successfully!');
     console.log('----------------------------------------------------');
     console.log('Default Accounts:');
-    console.log('  Manager: manager@stocksense.com  | Password: admin123');
-    console.log('  Staff:   staff@stocksense.com    | Password: staff123');
+    console.log('  Manager: Alex Morgan   | email: manager@stocksense.com | Password: admin123');
+    console.log('  Staff:   Marcus Miller | email: staff@stocksense.com   | Password: staff123');
+    console.log('  Assigned Warehouse: Main Central Hub');
     console.log('----------------------------------------------------');
 
     process.exit(0);

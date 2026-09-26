@@ -18,6 +18,9 @@ export const AdjustmentsView: React.FC = () => {
     currentUser,
     createStockAdjustment,
     validateStockAdjustment,
+    approveAdjustment,
+    rejectAdjustment,
+    submitStockCount,
   } = useInventory();
 
   const isStaff = currentUser.role === 'warehouse_staff';
@@ -98,7 +101,7 @@ export const AdjustmentsView: React.FC = () => {
           className="btn-primary py-1.5 px-3 text-xs"
         >
           <Plus className="w-4 h-4 text-orange-400" strokeWidth={2} />
-          <span>{isStaff ? 'Submit Floor Count' : 'New Adjustment'}</span>
+          <span>{isStaff ? 'Submit Count' : 'New Adjustment'}</span>
         </button>
       </div>
 
@@ -106,14 +109,17 @@ export const AdjustmentsView: React.FC = () => {
       <div className="space-y-3.5">
         {displayAdjustments.map((adj) => {
           const item = adj.items[0];
-          const isPending = adj.status === 'waiting';
+          const s = String(adj.status || '').toLowerCase();
+          const isAwaiting = s.includes('wait') || s.includes('submit');
+          const isDone = s === 'completed' || s === 'done';
+          const isCancelled = s === 'rejected' || s === 'cancelled';
 
           return (
             <div
               key={adj.id}
               className={`p-4 bg-white border rounded-lg transition-colors space-y-3 ${
-                isPending
-                  ? 'border-amber-300 dark:border-amber-700/60 shadow-xs'
+                isAwaiting
+                  ? 'border-amber-300 shadow-xs'
                   : 'border-slate-200 hover:border-slate-300'
               }`}
             >
@@ -126,42 +132,59 @@ export const AdjustmentsView: React.FC = () => {
                     {adj.reason}
                   </Badge>
                   <span className="text-xs text-slate-400">
-                    Recorded {formatDateTime(adj.createdAt)} by {adj.createdByName}
+                    Recorded {formatDateTime(adj.createdAt)} by {adj.createdByName || adj.submittedBy}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isPending ? (
+                  {isAwaiting && (
                     <>
                       <span className="flex items-center gap-1 text-xs text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded border border-amber-200 font-medium">
                         <Clock className="w-3.5 h-3.5 text-amber-600" />
-                        Pending Manager Approval
+                        Awaiting Manager Approval {adj.submittedBy ? `(${adj.submittedBy})` : ''}
                       </span>
                       {isManager && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            validateStockAdjustment(adj.id);
-                            try {
-                              confetti({ particleCount: 35, spread: 45 });
-                            } catch (e) {}
-                          }}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                        >
-                          <CircleCheck className="w-3.5 h-3.5" />
-                          Validate &amp; Apply
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              approveAdjustment(adj.id);
+                              try {
+                                confetti({ particleCount: 35, spread: 45 });
+                              } catch (e) {}
+                            }}
+                            className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                          >
+                            <CircleCheck className="w-3.5 h-3.5" />
+                            Approve Adjustment
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const r = prompt('Rejection reason:', 'Count discrepancy unverified');
+                              if (r !== null) {
+                                rejectAdjustment(adj.id, r);
+                              }
+                            }}
+                            className="px-2.5 py-1 text-xs font-semibold rounded bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition-colors cursor-pointer"
+                          >
+                            Reject
+                          </button>
+                        </div>
                       )}
                     </>
-                  ) : (
+                  )}
+
+                  {isDone && (
                     <span className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-medium">
                       <CircleCheck className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      Adjusted &amp; Validated
-                      {adj.validatedByName && (
-                        <span className="text-[11px] text-emerald-600 font-normal ml-0.5">
-                          ({adj.validatedByName})
-                        </span>
-                      )}
+                      Adjusted &amp; Validated {adj.approvedBy ? `(${adj.approvedBy})` : ''}
+                    </span>
+                  )}
+
+                  {isCancelled && (
+                    <span className="flex items-center gap-1 text-xs text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 font-medium">
+                      Rejected {adj.rejectionReason ? `· ${adj.rejectionReason}` : ''}
                     </span>
                   )}
                 </div>

@@ -15,6 +15,8 @@ import {
   OperationStatus,
   DeliveryStage,
   AdjustmentReason,
+  PendingApprovalItem,
+  StaffActivityItem,
 } from '@/types/inventory';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -29,6 +31,7 @@ import {
   INITIAL_ADJUSTMENTS,
   INITIAL_LEDGER,
   INITIAL_REORDER_RULES,
+  INITIAL_STAFF_ACTIVITY,
 } from '@/lib/initialData';
 
 interface InventoryContextType {
@@ -49,6 +52,8 @@ interface InventoryContextType {
   transfers: InternalTransfer[];
   adjustments: StockAdjustment[];
   ledger: StockLedgerEntry[];
+  staffActivity: StaffActivityItem[];
+  pendingApprovals: PendingApprovalItem[];
 
   // Actions - Products
   addProduct: (productData: {
@@ -72,7 +77,7 @@ interface InventoryContextType {
   getTotalStockForProduct: (product: Product) => number;
   getAvailableStockForProduct: (product: Product) => number;
 
-  // Actions - Receipts
+  // Actions - Receipts (Two-Role Workflow)
   createReceipt: (data: {
     supplierName: string;
     destinationWarehouseId: string;
@@ -84,10 +89,13 @@ interface InventoryContextType {
     }[];
     notes?: string;
   }) => Receipt;
+  confirmPhysicalIntake: (receiptId: string) => boolean;
+  approveReceipt: (receiptId: string) => boolean;
+  rejectReceipt: (receiptId: string, reason?: string) => boolean;
   validateReceipt: (receiptId: string) => boolean;
   cancelReceipt: (receiptId: string) => void;
 
-  // Actions - Deliveries
+  // Actions - Deliveries (Two-Role Workflow)
   createDelivery: (data: {
     customerName: string;
     sourceWarehouseId: string;
@@ -98,10 +106,15 @@ interface InventoryContextType {
     }[];
     notes?: string;
   }) => DeliveryOrder;
+  startPicking: (deliveryId: string) => boolean;
+  confirmPacking: (deliveryId: string) => boolean;
+  submitDelivery: (deliveryId: string) => boolean;
+  approveDelivery: (deliveryId: string) => boolean;
+  rejectDelivery: (deliveryId: string, reason?: string) => boolean;
   advanceDeliveryStage: (deliveryId: string, nextStage?: DeliveryStage) => boolean;
   cancelDelivery: (deliveryId: string) => void;
 
-  // Actions - Internal Transfers
+  // Actions - Internal Transfers (Two-Role Workflow)
   createInternalTransfer: (data: {
     sourceWarehouseId: string;
     sourceLocationId: string;
@@ -114,10 +127,13 @@ interface InventoryContextType {
     scheduledDate?: string;
     notes?: string;
   }) => InternalTransfer;
+  reportTransferComplete: (transferId: string) => boolean;
+  approveTransfer: (transferId: string) => boolean;
+  rejectTransfer: (transferId: string, reason?: string) => boolean;
   validateTransfer: (transferId: string) => boolean;
   cancelTransfer: (transferId: string) => void;
 
-  // Actions - Stock Adjustments
+  // Actions - Stock Adjustments (Two-Role Workflow)
   createStockAdjustment: (data: {
     warehouseId: string;
     reason: AdjustmentReason;
@@ -128,7 +144,23 @@ interface InventoryContextType {
       physicalQuantity: number;
     }[];
   }) => StockAdjustment;
+  submitStockCount: (data: {
+    warehouseId: string;
+    reason: AdjustmentReason;
+    notes?: string;
+    items: {
+      productId: string;
+      locationId: string;
+      physicalQuantity: number;
+    }[];
+  }) => StockAdjustment;
+  approveAdjustment: (adjustmentId: string) => boolean;
+  rejectAdjustment: (adjustmentId: string, reason?: string) => boolean;
   validateStockAdjustment: (adjustmentId: string) => boolean;
+
+  // Unified Approval Actions
+  approvePendingOperation: (item: PendingApprovalItem) => boolean;
+  rejectPendingOperation: (item: PendingApprovalItem, reason?: string) => boolean;
 
   // Actions - Reordering Rules
   addReorderRule: (rule: Omit<ReorderingRule, 'id'>) => void;
@@ -154,6 +186,7 @@ interface InventoryContextType {
     pendingReceiptsCount: number;
     pendingDeliveriesCount: number;
     scheduledTransfersCount: number;
+    pendingApprovalsCount: number;
   };
   lowStockAlerts: {
     product: Product;
@@ -193,7 +226,7 @@ interface InventoryContextType {
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'stocksense_ims_state_v1';
+const STORAGE_KEY = 'stocksense_ims_state_v2';
 
 export function InventoryProvider({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
@@ -206,6 +239,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
   const [transfers, setTransfers] = useState<InternalTransfer[]>(INITIAL_TRANSFERS);
   const [adjustments, setAdjustments] = useState<StockAdjustment[]>(INITIAL_ADJUSTMENTS);
   const [ledger, setLedger] = useState<StockLedgerEntry[]>(INITIAL_LEDGER);
+  const [staffActivity, setStaffActivity] = useState<StaffActivityItem[]>(INITIAL_STAFF_ACTIVITY);
   const [reorderRules, setReorderRules] = useState<ReorderingRule[]>(INITIAL_REORDER_RULES);
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -230,6 +264,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         if (parsed.transfers) setTransfers(parsed.transfers);
         if (parsed.adjustments) setAdjustments(parsed.adjustments);
         if (parsed.ledger) setLedger(parsed.ledger);
+        if (parsed.staffActivity) setStaffActivity(parsed.staffActivity);
         if (parsed.reorderRules) setReorderRules(parsed.reorderRules);
         if (parsed.currentUser && !auth?.user) setCurrentUser(parsed.currentUser);
       }
@@ -239,7 +274,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     setIsHydrated(true);
   }, [auth?.user]);
 
-  // Save to localStorage whenever state changes after hydration
+  // Save to localStorage whenever state changes
   useEffect(() => {
     if (!isHydrated) return;
     try {
@@ -255,11 +290,12 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
           transfers,
           adjustments,
           ledger,
+          staffActivity,
           reorderRules,
         })
       );
     } catch (e) {
-      console.error('Failed to save state to localStorage', e);
+      console.error('Failed to persist state to localStorage', e);
     }
   }, [
     isHydrated,
@@ -272,37 +308,35 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     transfers,
     adjustments,
     ledger,
+    staffActivity,
     reorderRules,
   ]);
 
   const switchUserRole = (role: 'inventory_manager' | 'warehouse_staff') => {
-    const targetUser = role === 'inventory_manager' ? INITIAL_USER : SECONDARY_USER;
-    setCurrentUser(targetUser);
-    if (auth?.quickLoginAs) {
-      auth.quickLoginAs(role);
-    }
+    const updated = role === 'inventory_manager' ? INITIAL_USER : SECONDARY_USER;
+    setCurrentUser(updated);
   };
 
   const updateCurrentUser = (userData: Partial<User>) => {
     setCurrentUser((prev) => ({ ...prev, ...userData }));
   };
 
-  const getProductById = (id: string) => {
-    return products.find((p) => p.id === id);
-  };
-
+  // Helper calculation functions
   const getTotalStockForProduct = (product: Product): number => {
-    return (product.locationStock || []).reduce((acc, curr) => acc + (curr.quantity || 0), 0);
+    if (!product || !product.locationStock) return 0;
+    return product.locationStock.reduce((sum, item) => sum + (item.quantity || 0), 0);
   };
 
   const getAvailableStockForProduct = (product: Product): number => {
-    return (product.locationStock || []).reduce(
-      (acc, curr) => acc + Math.max(0, (curr.quantity || 0) - (curr.reserved || 0)),
-      0
-    );
+    if (!product || !product.locationStock) return 0;
+    return product.locationStock.reduce((sum, item) => sum + Math.max(0, (item.quantity || 0) - (item.reserved || 0)), 0);
   };
 
-  // Add Product
+  const getProductById = (id: string): Product | undefined => {
+    return products.find((p) => p.id === id);
+  };
+
+  // Add Product (Manager only)
   const addProduct = (data: {
     name: string;
     sku: string;
@@ -319,84 +353,63 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     supplierName?: string;
   }): Product => {
     if (currentUser.role !== 'inventory_manager') {
-      throw new Error('403 Forbidden: Only Inventory Managers can create or register master products.');
+      throw new Error('403 Forbidden: Only Inventory Managers can create products.');
     }
-    const newId = `prod-${Date.now().toString().slice(-5)}`;
-    let initialLocationStock = [];
 
-    const targetWarehouse = warehouses.find((w) => w.id === data.initialWarehouseId) || warehouses[0];
-    const targetLocation =
-      targetWarehouse?.locations.find((l) => l.id === data.initialLocationId) || targetWarehouse?.locations[0];
-
-    if (data.initialStock && data.initialStock > 0 && targetLocation && targetWarehouse) {
-      initialLocationStock.push({
-        locationId: targetLocation.id,
-        locationName: targetLocation.name,
-        warehouseId: targetWarehouse.id,
-        warehouseName: targetWarehouse.name,
-        quantity: data.initialStock,
-        reserved: 0,
-      });
-
-      // Log to Ledger
-      const newLedgerEntry: StockLedgerEntry = {
-        id: `led-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        productId: newId,
-        productName: data.name,
-        sku: data.sku,
-        operationType: 'Initial Stock',
-        referenceNumber: 'INIT-SETUP',
-        sourceLocationName: 'System Setup / Opening Balance',
-        destinationLocationName: `${targetWarehouse.name} [${targetLocation.name}]`,
-        quantityDelta: data.initialStock,
-        unitOfMeasure: data.unitOfMeasure,
-        resultingTotalStock: data.initialStock,
-        userName: currentUser.name,
-        status: 'Completed',
-        notes: 'Initial inventory onboarded into system.',
-      };
-      setLedger((prev) => [newLedgerEntry, ...prev]);
-    }
+    const whId = data.initialWarehouseId || 'wh-main';
+    const locId = data.initialLocationId || 'loc-main-ra';
+    const wh = warehouses.find((w) => w.id === whId);
+    const loc = wh?.locations.find((l) => l.id === locId);
+    const initStock = data.initialStock || 0;
 
     const newProduct: Product = {
-      id: newId,
+      id: `prod-${Date.now().toString().slice(-4)}`,
       name: data.name,
       sku: data.sku.toUpperCase(),
-      barcode: `890100${Math.floor(100000 + Math.random() * 900000)}`,
+      barcode: `890${Math.floor(100000000 + Math.random() * 900000000)}`,
       category: data.category,
       unitOfMeasure: data.unitOfMeasure,
       costPrice: data.costPrice,
       sellingPrice: data.sellingPrice,
       reorderPoint: data.reorderPoint,
       maxStock: data.maxStock,
-      description: data.description || '',
-      supplierName: data.supplierName || 'General Sourcing Corp',
-      locationStock: initialLocationStock,
+      description: data.description,
+      supplierName: data.supplierName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      locationStock: [
+        {
+          locationId: locId,
+          locationName: loc ? loc.name : 'Heavy Rack A',
+          warehouseId: whId,
+          warehouseName: wh ? wh.name : 'Main Central Hub',
+          quantity: initStock,
+          reserved: 0,
+        },
+      ],
     };
 
     setProducts((prev) => [newProduct, ...prev]);
 
-    // Also auto-create a reordering rule
-    if (data.reorderPoint > 0) {
-      const newRule: ReorderingRule = {
-        id: `rule-${Date.now().toString().slice(-4)}`,
+    if (initStock > 0) {
+      const ledgerEntry: StockLedgerEntry = {
+        id: `led-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        timestamp: new Date().toISOString(),
         productId: newProduct.id,
         productName: newProduct.name,
         sku: newProduct.sku,
-        warehouseId: targetWarehouse ? targetWarehouse.id : warehouses[0].id,
-        warehouseName: targetWarehouse ? targetWarehouse.name : warehouses[0].name,
-        minStock: data.reorderPoint,
-        maxStock: data.maxStock || data.reorderPoint * 4,
-        reorderQuantity: (data.maxStock || data.reorderPoint * 4) - data.reorderPoint,
-        unitOfMeasure: data.unitOfMeasure,
-        isActive: true,
-        leadTimeDays: 5,
-        supplierName: data.supplierName || 'Default Vendor',
+        operationType: 'Initial Stock',
+        referenceNumber: `INIT-${newProduct.sku}`,
+        sourceLocationName: 'Initial Inventory Setup',
+        destinationLocationName: `${wh?.name || 'Warehouse'} → ${loc?.name || 'Rack'}`,
+        quantityDelta: initStock,
+        unitOfMeasure: newProduct.unitOfMeasure,
+        resultingTotalStock: initStock,
+        userName: currentUser.name,
+        status: 'Completed',
+        notes: 'Initial stock intake on product creation.',
       };
-      setReorderRules((prev) => [newRule, ...prev]);
+      setLedger((prev) => [ledgerEntry, ...prev]);
     }
 
     return newProduct;
@@ -404,7 +417,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     if (currentUser.role !== 'inventory_manager') {
-      throw new Error('403 Forbidden: Only Inventory Managers can modify product master data.');
+      throw new Error('403 Forbidden: Only Inventory Managers can modify products.');
     }
     setProducts((prev) =>
       prev.map((p) => (p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p))
@@ -418,7 +431,29 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     setProducts((prev) => prev.filter((p) => p.id !== id));
   };
 
-  // Receipts
+  // Helper to record staff activity
+  const logStaffActivity = (action: string, reference: string, status: string, details?: string) => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const newAct: StaffActivityItem = {
+      id: `act-${Date.now()}`,
+      timestamp: now.toISOString(),
+      time: timeStr,
+      action,
+      reference,
+      status,
+      details,
+    };
+    setStaffActivity((prev) => [newAct, ...prev]);
+  };
+
+  // =========================================================================
+  // RECEIVING WORKFLOW:
+  // Staff: Confirm Physical Intake -> AWAITING APPROVAL (Stock unchanged)
+  // Manager: Approve Receipt -> COMPLETED (Stock increases + Stock Ledger entry)
+  // Manager: Reject -> REJECTED (Stock unchanged)
+  // =========================================================================
+
   const createReceipt = (data: {
     supplierName: string;
     destinationWarehouseId: string;
@@ -432,7 +467,6 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
   }): Receipt => {
     const wh = warehouses.find((w) => w.id === data.destinationWarehouseId) || warehouses[0];
     const loc = wh.locations.find((l) => l.id === data.destinationLocationId) || wh.locations[0];
-
     const receiptNumber = `REC-${Math.floor(1050 + receipts.length)}`;
 
     const items = data.items.map((item) => {
@@ -466,17 +500,55 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     return newReceipt;
   };
 
-  const validateReceipt = (receiptId: string): boolean => {
+  // Staff Action: Confirm Physical Intake -> moves to AWAITING APPROVAL without changing stock!
+  const confirmPhysicalIntake = (receiptId: string): boolean => {
     const receipt = receipts.find((r) => r.id === receiptId);
-    if (!receipt || receipt.status === 'done' || receipt.status === 'cancelled') return false;
+    if (!receipt || receipt.status === 'completed' || receipt.status === 'done' || receipt.status === 'awaiting_approval') {
+      return false;
+    }
 
-    // Increase stock for each item in destination location
+    const nowIso = new Date().toISOString();
+    setReceipts((prev) =>
+      prev.map((r) =>
+        r.id === receiptId
+          ? {
+              ...r,
+              status: 'awaiting_approval',
+              submittedBy: currentUser.name,
+              submittedAt: nowIso,
+            }
+          : r
+      )
+    );
+
+    logStaffActivity(
+      'Receipt submitted',
+      receipt.receiptNumber,
+      'Awaiting approval',
+      `${receipt.supplierName} • ${receipt.items[0]?.quantityReceived || 100} ${receipt.items[0]?.unitOfMeasure || 'units'}`
+    );
+
+    return true;
+  };
+
+  // Manager Action: Approve Receipt -> increases official inventory and logs to Stock Ledger
+  const approveReceipt = (receiptId: string): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can approve receipts.');
+    }
+
+    const receipt = receipts.find((r) => r.id === receiptId);
+    if (!receipt || receipt.status === 'completed' || receipt.status === 'done') return false;
+
+    const nowIso = new Date().toISOString();
+
+    // 1. Official Inventory Increase
     setProducts((prevProducts) => {
       return prevProducts.map((product) => {
-        const receiptItem = receipt.items.find((item) => item.productId === product.id);
-        if (!receiptItem) return product;
+        const item = receipt.items.find((i) => i.productId === product.id);
+        if (!item) return product;
 
-        const qtyToAdd = receiptItem.quantityReceived || receiptItem.quantityExpected;
+        const qtyToAdd = item.quantityReceived || item.quantityExpected;
         const currentLocStocks = [...(product.locationStock || [])];
         const existingLocIndex = currentLocStocks.findIndex(
           (ls) => ls.locationId === receipt.destinationLocationId
@@ -493,9 +565,9 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         } else {
           currentLocStocks.push({
             locationId: receipt.destinationLocationId,
-            locationName: loc ? loc.name : 'Racking Area',
+            locationName: loc ? loc.name : 'Receiving Bay A',
             warehouseId: receipt.destinationWarehouseId,
-            warehouseName: wh ? wh.name : 'Main Hub',
+            warehouseName: wh ? wh.name : 'Main Central Hub',
             quantity: qtyToAdd,
             reserved: 0,
           });
@@ -504,18 +576,27 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         return {
           ...product,
           locationStock: currentLocStocks,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso,
         };
       });
     });
 
-    // Mark Receipt Done
-    const nowIso = new Date().toISOString();
+    // 2. Mark receipt completed
     setReceipts((prev) =>
-      prev.map((r) => (r.id === receiptId ? { ...r, status: 'done', validatedAt: nowIso } : r))
+      prev.map((r) =>
+        r.id === receiptId
+          ? {
+              ...r,
+              status: 'completed',
+              approvedBy: currentUser.name,
+              approvedAt: nowIso,
+              validatedAt: nowIso,
+            }
+          : r
+      )
     );
 
-    // Append to Stock Ledger
+    // 3. Create Stock Ledger entry
     receipt.items.forEach((item) => {
       const prod = products.find((p) => p.id === item.productId);
       const qtyAdded = item.quantityReceived || item.quantityExpected;
@@ -536,13 +617,61 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         resultingTotalStock: prevTotal + qtyAdded,
         userName: currentUser.name,
         status: 'Completed',
-        notes: receipt.notes || 'Inbound goods receipt validated.',
+        notes: `Receipt approved by Manager ${currentUser.name}. Inbound freight received into official stock.`,
       };
 
       setLedger((prev) => [ledgerEntry, ...prev]);
     });
 
+    // Update staff activity status to Completed
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === receipt.receiptNumber ? { ...act, status: 'Completed' } : act
+      )
+    );
+
     return true;
+  };
+
+  // Manager Action: Reject Receipt
+  const rejectReceipt = (receiptId: string, reason = 'Intake rejected by Manager'): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can reject receipts.');
+    }
+
+    const receipt = receipts.find((r) => r.id === receiptId);
+    if (!receipt) return false;
+
+    const nowIso = new Date().toISOString();
+    setReceipts((prev) =>
+      prev.map((r) =>
+        r.id === receiptId
+          ? {
+              ...r,
+              status: 'rejected',
+              rejectedBy: currentUser.name,
+              rejectedAt: nowIso,
+              rejectionReason: reason,
+            }
+          : r
+      )
+    );
+
+    // Update staff activity status to Rejected
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === receipt.receiptNumber ? { ...act, status: 'Rejected' } : act
+      )
+    );
+
+    return true;
+  };
+
+  const validateReceipt = (receiptId: string): boolean => {
+    if (currentUser.role === 'warehouse_staff') {
+      return confirmPhysicalIntake(receiptId);
+    }
+    return approveReceipt(receiptId);
   };
 
   const cancelReceipt = (receiptId: string) => {
@@ -551,7 +680,13 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  // Deliveries
+  // =========================================================================
+  // DELIVERY WORKFLOW:
+  // Staff: Start Picking -> Confirm Packing -> Submit Delivery -> AWAITING APPROVAL
+  // Manager: Approve Dispatch -> COMPLETED (Stock decreases)
+  // Manager: Reject -> REJECTED (Stock unchanged)
+  // =========================================================================
+
   const createDelivery = (data: {
     customerName: string;
     sourceWarehouseId: string;
@@ -564,7 +699,6 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
   }): DeliveryOrder => {
     const wh = warehouses.find((w) => w.id === data.sourceWarehouseId) || warehouses[0];
     const loc = wh.locations.find((l) => l.id === data.sourceLocationId) || wh.locations[0];
-
     const deliveryNumber = `DEL-${Math.floor(1055 + deliveries.length)}`;
 
     const items = data.items.map((item) => {
@@ -600,123 +734,211 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     return newDelivery;
   };
 
+  const startPicking = (deliveryId: string): boolean => {
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.id === deliveryId
+          ? {
+              ...d,
+              stage: 'pick',
+              status: 'in_progress',
+              items: d.items.map((i) => ({ ...i, quantityPicked: i.quantityRequested })),
+            }
+          : d
+      )
+    );
+    return true;
+  };
+
+  const confirmPacking = (deliveryId: string): boolean => {
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.id === deliveryId
+          ? {
+              ...d,
+              stage: 'pack',
+              status: 'in_progress',
+              items: d.items.map((i) => ({ ...i, quantityPacked: i.quantityRequested })),
+            }
+          : d
+      )
+    );
+    return true;
+  };
+
+  const submitDelivery = (deliveryId: string): boolean => {
+    const order = deliveries.find((d) => d.id === deliveryId);
+    if (!order) return false;
+
+    const nowIso = new Date().toISOString();
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.id === deliveryId
+          ? {
+              ...d,
+              stage: 'pack',
+              status: 'awaiting_approval',
+              submittedBy: currentUser.name,
+              submittedAt: nowIso,
+              items: d.items.map((i) => ({
+                ...i,
+                quantityPicked: i.quantityRequested,
+                quantityPacked: i.quantityRequested,
+              })),
+            }
+          : d
+      )
+    );
+
+    logStaffActivity(
+      'Delivery packed',
+      order.deliveryNumber,
+      'Awaiting approval',
+      `${order.customerName} • Picked & Packed ${order.items[0]?.quantityRequested || 10} units`
+    );
+
+    return true;
+  };
+
+  // Manager Action: Approve Dispatch -> Deduct official stock
+  const approveDelivery = (deliveryId: string): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can approve delivery dispatch.');
+    }
+
+    const order = deliveries.find((d) => d.id === deliveryId);
+    if (!order || order.status === 'completed' || order.status === 'done') return false;
+
+    const nowIso = new Date().toISOString();
+
+    // 1. Deduct stock from source location
+    setProducts((prevProducts) => {
+      return prevProducts.map((product) => {
+        const itemToDeliver = order.items.find((i) => i.productId === product.id);
+        if (!itemToDeliver) return product;
+
+        const qtyToDeduct = itemToDeliver.quantityPacked || itemToDeliver.quantityRequested;
+        const currentLocStocks = [...(product.locationStock || [])];
+        const existingLocIndex = currentLocStocks.findIndex(
+          (ls) => ls.locationId === order.sourceLocationId
+        );
+
+        if (existingLocIndex >= 0) {
+          currentLocStocks[existingLocIndex] = {
+            ...currentLocStocks[existingLocIndex],
+            quantity: Math.max(0, currentLocStocks[existingLocIndex].quantity - qtyToDeduct),
+          };
+        }
+
+        return {
+          ...product,
+          locationStock: currentLocStocks,
+          updatedAt: nowIso,
+        };
+      });
+    });
+
+    // 2. Mark delivery completed
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.id === deliveryId
+          ? {
+              ...d,
+              stage: 'done',
+              status: 'completed',
+              approvedBy: currentUser.name,
+              approvedAt: nowIso,
+              validatedAt: nowIso,
+            }
+          : d
+      )
+    );
+
+    // 3. Add to Stock Ledger
+    order.items.forEach((item) => {
+      const prod = products.find((p) => p.id === item.productId);
+      const prevTotal = prod ? getTotalStockForProduct(prod) : 0;
+      const qtyDeducted = item.quantityPacked || item.quantityRequested;
+
+      const ledgerEntry: StockLedgerEntry = {
+        id: `led-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        timestamp: nowIso,
+        productId: item.productId,
+        productName: item.productName,
+        sku: item.sku,
+        operationType: 'Delivery',
+        referenceNumber: order.deliveryNumber,
+        sourceLocationName: order.sourceLocationName,
+        destinationLocationName: `Customer: ${order.customerName}`,
+        quantityDelta: -qtyDeducted,
+        unitOfMeasure: item.unitOfMeasure,
+        resultingTotalStock: Math.max(0, prevTotal - qtyDeducted),
+        userName: currentUser.name,
+        status: 'Completed',
+        notes: `Dispatch approved by Manager ${currentUser.name}. Carrier outbound released.`,
+      };
+      setLedger((prev) => [ledgerEntry, ...prev]);
+    });
+
+    // Update staff activity
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === order.deliveryNumber ? { ...act, status: 'Completed' } : act
+      )
+    );
+
+    return true;
+  };
+
+  // Manager Action: Reject Delivery
+  const rejectDelivery = (deliveryId: string, reason = 'Dispatch rejected by Manager'): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can reject deliveries.');
+    }
+
+    const order = deliveries.find((d) => d.id === deliveryId);
+    if (!order) return false;
+
+    const nowIso = new Date().toISOString();
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.id === deliveryId
+          ? {
+              ...d,
+              status: 'rejected',
+              rejectedBy: currentUser.name,
+              rejectedAt: nowIso,
+              rejectionReason: reason,
+            }
+          : d
+      )
+    );
+
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === order.deliveryNumber ? { ...act, status: 'Rejected' } : act
+      )
+    );
+
+    return true;
+  };
+
   const advanceDeliveryStage = (deliveryId: string, nextStage?: DeliveryStage): boolean => {
     const order = deliveries.find((d) => d.id === deliveryId);
-    if (!order || order.status === 'done' || order.status === 'cancelled') return false;
+    if (!order) return false;
 
-    let targetStage: DeliveryStage = nextStage || 'pick';
-    if (!nextStage) {
-      if (order.stage === 'draft' || order.stage === 'pick') targetStage = 'pack';
-      else if (order.stage === 'pack') targetStage = 'validate';
-      else if (order.stage === 'validate') targetStage = 'done';
+    if (currentUser.role === 'warehouse_staff') {
+      if (order.stage === 'draft' || order.stage === 'pick') {
+        return confirmPacking(deliveryId);
+      }
+      return submitDelivery(deliveryId);
     }
 
-    if (targetStage === 'pack') {
-      // Pick all items fully
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === deliveryId
-            ? {
-                ...d,
-                stage: 'pack',
-                items: d.items.map((item) => ({ ...item, quantityPicked: item.quantityRequested })),
-              }
-            : d
-        )
-      );
-      return true;
+    // Manager
+    if (nextStage === 'done' || order.status === 'awaiting_approval') {
+      return approveDelivery(deliveryId);
     }
-
-    if (targetStage === 'validate') {
-      // Pack all items fully
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === deliveryId
-            ? {
-                ...d,
-                stage: 'validate',
-                items: d.items.map((item) => ({ ...item, quantityPacked: item.quantityRequested })),
-              }
-            : d
-        )
-      );
-      return true;
-    }
-
-    if (targetStage === 'done') {
-      // Deduct stock from the source location
-      const nowIso = new Date().toISOString();
-
-      setProducts((prevProducts) => {
-        return prevProducts.map((product) => {
-          const itemToDeliver = order.items.find((i) => i.productId === product.id);
-          if (!itemToDeliver) return product;
-
-          const qtyToDeduct = itemToDeliver.quantityRequested;
-          const currentLocStocks = [...(product.locationStock || [])];
-          const existingLocIndex = currentLocStocks.findIndex(
-            (ls) => ls.locationId === order.sourceLocationId
-          );
-
-          if (existingLocIndex >= 0) {
-            currentLocStocks[existingLocIndex] = {
-              ...currentLocStocks[existingLocIndex],
-              quantity: Math.max(0, currentLocStocks[existingLocIndex].quantity - qtyToDeduct),
-              reserved: Math.max(0, (currentLocStocks[existingLocIndex].reserved || 0) - qtyToDeduct),
-            };
-          }
-
-          return {
-            ...product,
-            locationStock: currentLocStocks,
-            updatedAt: nowIso,
-          };
-        });
-      });
-
-      // Update delivery order status
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === deliveryId
-            ? {
-                ...d,
-                stage: 'done',
-                status: 'done',
-                validatedAt: nowIso,
-              }
-            : d
-        )
-      );
-
-      // Add to ledger
-      order.items.forEach((item) => {
-        const prod = products.find((p) => p.id === item.productId);
-        const prevTotal = prod ? getTotalStockForProduct(prod) : 0;
-
-        const ledgerEntry: StockLedgerEntry = {
-          id: `led-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          timestamp: nowIso,
-          productId: item.productId,
-          productName: item.productName,
-          sku: item.sku,
-          operationType: 'Delivery',
-          referenceNumber: order.deliveryNumber,
-          sourceLocationName: order.sourceLocationName,
-          destinationLocationName: `Customer: ${order.customerName}`,
-          quantityDelta: -item.quantityRequested,
-          unitOfMeasure: item.unitOfMeasure,
-          resultingTotalStock: Math.max(0, prevTotal - item.quantityRequested),
-          userName: currentUser.name,
-          status: 'Completed',
-          notes: order.notes || 'Goods dispatched to client destination.',
-        };
-        setLedger((prev) => [ledgerEntry, ...prev]);
-      });
-
-      return true;
-    }
-
-    return false;
+    return submitDelivery(deliveryId);
   };
 
   const cancelDelivery = (deliveryId: string) => {
@@ -725,7 +947,13 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  // Internal Transfers
+  // =========================================================================
+  // INTERNAL TRANSFER WORKFLOW:
+  // Staff: Report Transfer Complete -> AWAITING APPROVAL (Stock locations unchanged)
+  // Manager: Approve Transfer -> COMPLETED (source decreases, dest increases, total unchanged)
+  // Manager: Reject -> REJECTED (Stock locations unchanged)
+  // =========================================================================
+
   const createInternalTransfer = (data: {
     sourceWarehouseId: string;
     sourceLocationId: string;
@@ -777,13 +1005,47 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     return newTransfer;
   };
 
-  const validateTransfer = (transferId: string): boolean => {
+  // Staff Action: Report physical movement complete
+  const reportTransferComplete = (transferId: string): boolean => {
     const transfer = transfers.find((t) => t.id === transferId);
-    if (!transfer || transfer.status === 'done' || transfer.status === 'cancelled') return false;
+    if (!transfer) return false;
+
+    const nowIso = new Date().toISOString();
+    setTransfers((prev) =>
+      prev.map((t) =>
+        t.id === transferId
+          ? {
+              ...t,
+              status: 'awaiting_approval',
+              submittedBy: currentUser.name,
+              submittedAt: nowIso,
+            }
+          : t
+      )
+    );
+
+    logStaffActivity(
+      'Transfer submitted',
+      transfer.transferNumber,
+      'Awaiting approval',
+      `${transfer.sourceLocationName} → ${transfer.destinationLocationName} (${transfer.items[0]?.quantity || 25} ${transfer.items[0]?.unitOfMeasure || 'units'})`
+    );
+
+    return true;
+  };
+
+  // Manager Action: Approve Transfer
+  const approveTransfer = (transferId: string): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can approve transfers.');
+    }
+
+    const transfer = transfers.find((t) => t.id === transferId);
+    if (!transfer || transfer.status === 'completed' || transfer.status === 'done') return false;
 
     const nowIso = new Date().toISOString();
 
-    // Source decreases, Destination increases, Total company stock is unchanged!
+    // Source decreases, Destination increases, Total company stock unchanged
     setProducts((prevProducts) => {
       return prevProducts.map((product) => {
         const item = transfer.items.find((i) => i.productId === product.id);
@@ -815,7 +1077,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
             locationId: transfer.destinationLocationId,
             locationName: destLoc ? destLoc.name : 'Target Bay',
             warehouseId: transfer.destinationWarehouseId,
-            warehouseName: destWh ? destWh.name : 'Destination Site',
+            warehouseName: destWh ? destWh.name : 'Main Central Hub',
             quantity: item.quantity,
             reserved: 0,
           });
@@ -829,12 +1091,22 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
-    // Mark transfer done
+    // Mark transfer completed
     setTransfers((prev) =>
-      prev.map((t) => (t.id === transferId ? { ...t, status: 'done', completedAt: nowIso } : t))
+      prev.map((t) =>
+        t.id === transferId
+          ? {
+              ...t,
+              status: 'completed',
+              approvedBy: currentUser.name,
+              approvedAt: nowIso,
+              completedAt: nowIso,
+            }
+          : t
+      )
     );
 
-    // Append to ledger (Delta = 0 company-wide, but location move logged)
+    // Ledger entry
     transfer.items.forEach((item) => {
       const prod = products.find((p) => p.id === item.productId);
       const total = prod ? getTotalStockForProduct(prod) : 0;
@@ -854,13 +1126,60 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         resultingTotalStock: total,
         userName: currentUser.name,
         status: 'Completed',
-        notes: `Transferred ${item.quantity} ${item.unitOfMeasure} between facilities.`,
+        notes: `Transfer approved by Manager ${currentUser.name}. Stock relocated between facility bays.`,
       };
 
       setLedger((prev) => [ledgerEntry, ...prev]);
     });
 
+    // Update staff activity
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === transfer.transferNumber ? { ...act, status: 'Completed' } : act
+      )
+    );
+
     return true;
+  };
+
+  // Manager Action: Reject Transfer
+  const rejectTransfer = (transferId: string, reason = 'Transfer rejected by Manager'): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can reject transfers.');
+    }
+
+    const transfer = transfers.find((t) => t.id === transferId);
+    if (!transfer) return false;
+
+    const nowIso = new Date().toISOString();
+    setTransfers((prev) =>
+      prev.map((t) =>
+        t.id === transferId
+          ? {
+              ...t,
+              status: 'rejected',
+              rejectedBy: currentUser.name,
+              rejectedAt: nowIso,
+              rejectionReason: reason,
+            }
+          : t
+      )
+    );
+
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === transfer.transferNumber ? { ...act, status: 'Rejected' } : act
+      )
+    );
+
+    return true;
+  };
+
+  const validateTransfer = (transferId: string): boolean => {
+    if (currentUser.role === 'warehouse_staff') {
+      return reportTransferComplete(transferId);
+    }
+    return approveTransfer(transferId);
   };
 
   const cancelTransfer = (transferId: string) => {
@@ -869,8 +1188,14 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  // Stock Adjustments
-  const createStockAdjustment = (data: {
+  // =========================================================================
+  // STOCK ADJUSTMENT WORKFLOW:
+  // Staff: Submit Count (System, Physical, Diff) -> AWAITING APPROVAL
+  // Manager: Approve Adjustment -> COMPLETED (Official inventory updates)
+  // Manager: Reject -> REJECTED (Stock unchanged)
+  // =========================================================================
+
+  const submitStockCount = (data: {
     warehouseId: string;
     reason: AdjustmentReason;
     notes?: string;
@@ -881,10 +1206,8 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     }[];
   }): StockAdjustment => {
     const wh = warehouses.find((w) => w.id === data.warehouseId) || warehouses[0];
-    const adjustmentNumber = `ADJ-2026-0${42 + adjustments.length}`;
+    const adjustmentNumber = `ADJ-0${43 + adjustments.length}`;
     const nowIso = new Date().toISOString();
-    const isStaff = currentUser.role === 'warehouse_staff';
-    const status = isStaff ? 'waiting' : 'done';
 
     const adjustmentItems = data.items.map((item) => {
       const prod = products.find((p) => p.id === item.productId);
@@ -898,7 +1221,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         productName: prod ? prod.name : 'Unknown Product',
         sku: prod ? prod.sku : 'UNK',
         locationId: item.locationId,
-        locationName: loc ? loc.name : 'Racking Slot',
+        locationName: loc ? loc.name : 'Standard Rack B',
         recordedQuantity: recorded,
         physicalQuantity: item.physicalQuantity,
         difference: diff,
@@ -912,92 +1235,61 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       warehouseId: wh.id,
       warehouseName: wh.name,
       reason: data.reason,
-      notes: data.notes || (isStaff ? 'Physical count submitted by warehouse floor staff. Awaiting manager approval.' : undefined),
-      status,
+      notes: data.notes || 'Physical count submitted by warehouse floor staff. Awaiting Manager approval.',
+      status: 'awaiting_approval',
       createdAt: nowIso,
       createdByName: currentUser.name,
+      submittedBy: currentUser.name,
+      submittedAt: nowIso,
       items: adjustmentItems,
     };
 
     setAdjustments((prev) => [newAdjustment, ...prev]);
 
-    // If Inventory Manager creates adjustment, update stocks and ledger immediately
-    if (!isStaff) {
-      setProducts((prevProducts) => {
-        return prevProducts.map((product) => {
-          const adjItem = adjustmentItems.find((i) => i.productId === product.id);
-          if (!adjItem) return product;
-
-          const currentStocks = [...(product.locationStock || [])];
-          const idx = currentStocks.findIndex((s) => s.locationId === adjItem.locationId);
-
-          if (idx >= 0) {
-            currentStocks[idx] = {
-              ...currentStocks[idx],
-              quantity: adjItem.physicalQuantity,
-            };
-          } else {
-            currentStocks.push({
-              locationId: adjItem.locationId,
-              locationName: adjItem.locationName,
-              warehouseId: wh.id,
-              warehouseName: wh.name,
-              quantity: adjItem.physicalQuantity,
-              reserved: 0,
-            });
-          }
-
-          return {
-            ...product,
-            locationStock: currentStocks,
-            updatedAt: nowIso,
-          };
-        });
-      });
-
-      // Append adjustment items to Stock Ledger
-      adjustmentItems.forEach((item) => {
-        const prod = products.find((p) => p.id === item.productId);
-        const newTotal = prod ? getTotalStockForProduct(prod) + item.difference : item.physicalQuantity;
-
-        const ledgerEntry: StockLedgerEntry = {
-          id: `led-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          timestamp: nowIso,
-          productId: item.productId,
-          productName: item.productName,
-          sku: item.sku,
-          operationType: 'Adjustment',
-          referenceNumber: adjustmentNumber,
-          sourceLocationName: `${wh.name} [${item.locationName}]`,
-          destinationLocationName: item.difference >= 0 ? 'Surplus Audit Credit' : 'Scrap / Loss Audit Debit',
-          quantityDelta: item.difference,
-          unitOfMeasure: item.unitOfMeasure,
-          resultingTotalStock: newTotal,
-          userName: currentUser.name,
-          status: 'Completed',
-          notes: `Inventory adjustment [${data.reason}]: count corrected from ${item.recordedQuantity} to ${item.physicalQuantity} (${item.difference >= 0 ? '+' : ''}${item.difference} ${item.unitOfMeasure}).`,
-        };
-
-        setLedger((prev) => [ledgerEntry, ...prev]);
-      });
-    }
+    const item = adjustmentItems[0];
+    logStaffActivity(
+      'Count submitted',
+      adjustmentNumber,
+      'Awaiting approval',
+      item ? `${item.productName}: ${item.recordedQuantity} → ${item.physicalQuantity} (${item.difference >= 0 ? '+' : ''}${item.difference})` : 'Discrepancy audit'
+    );
 
     return newAdjustment;
   };
 
-  // Manager Approval Action for Adjustments
-  const validateStockAdjustment = (adjustmentId: string): boolean => {
+  const createStockAdjustment = (data: {
+    warehouseId: string;
+    reason: AdjustmentReason;
+    notes?: string;
+    items: {
+      productId: string;
+      locationId: string;
+      physicalQuantity: number;
+    }[];
+  }): StockAdjustment => {
+    if (currentUser.role === 'warehouse_staff') {
+      return submitStockCount(data);
+    }
+
+    // Manager directly applying adjustment
+    const adj = submitStockCount(data);
+    approveAdjustment(adj.id);
+    return adj;
+  };
+
+  // Manager Action: Approve Adjustment -> Updates official inventory
+  const approveAdjustment = (adjustmentId: string): boolean => {
     if (currentUser.role !== 'inventory_manager') {
-      throw new Error('403 Forbidden: Only Inventory Managers can approve and validate adjustments.');
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can approve adjustments.');
     }
 
     const adj = adjustments.find((a) => a.id === adjustmentId);
-    if (!adj || adj.status !== 'waiting') return false;
+    if (!adj || adj.status === 'completed' || adj.status === 'done') return false;
 
     const nowIso = new Date().toISOString();
     const wh = warehouses.find((w) => w.id === adj.warehouseId) || warehouses[0];
 
-    // Apply differences to product stocks
+    // 1. Update official inventory to counted quantity
     setProducts((prevProducts) => {
       return prevProducts.map((product) => {
         const adjItem = adj.items.find((i) => i.productId === product.id);
@@ -1013,8 +1305,8 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
           };
         } else {
           currentStocks.push({
-            locationId: adjItem.locationId,
-            locationName: adjItem.locationName,
+            locationId: adjItem.locationId || 'loc-main-ra',
+            locationName: adjItem.locationName || 'Standard Bay',
             warehouseId: wh.id,
             warehouseName: wh.name,
             quantity: adjItem.physicalQuantity,
@@ -1030,7 +1322,23 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
-    // Record ledger entries
+    // 2. Mark adjustment completed
+    setAdjustments((prev) =>
+      prev.map((a) =>
+        a.id === adjustmentId
+          ? {
+              ...a,
+              status: 'completed',
+              approvedBy: currentUser.name,
+              approvedAt: nowIso,
+              validatedByName: currentUser.name,
+              validatedAt: nowIso,
+            }
+          : a
+      )
+    );
+
+    // 3. Write to Stock Ledger
     adj.items.forEach((item) => {
       const prod = products.find((p) => p.id === item.productId);
       const newTotal = prod ? getTotalStockForProduct(prod) + item.difference : item.physicalQuantity;
@@ -1050,30 +1358,90 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         resultingTotalStock: newTotal,
         userName: currentUser.name,
         status: 'Completed',
-        notes: `Manager approved physical count submitted by ${adj.createdByName}.`,
+        notes: `Adjustment approved by Manager ${currentUser.name}: ${item.recordedQuantity} → ${item.physicalQuantity} (${item.difference >= 0 ? '+' : ''}${item.difference} ${item.unitOfMeasure}) [${adj.reason}].`,
       };
 
       setLedger((prev) => [ledgerEntry, ...prev]);
     });
 
-    // Update adjustment status
-    setAdjustments((prev) =>
-      prev.map((a) =>
-        a.id === adjustmentId
-          ? {
-              ...a,
-              status: 'done',
-              validatedByName: currentUser.name,
-              validatedAt: nowIso,
-            }
-          : a
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === adj.adjustmentNumber ? { ...act, status: 'Completed' } : act
       )
     );
 
     return true;
   };
 
-  // Reorder Rules (Manager Only)
+  // Manager Action: Reject Adjustment
+  const rejectAdjustment = (adjustmentId: string, reason = 'Physical count rejected by Manager'): boolean => {
+    if (currentUser.role !== 'inventory_manager') {
+      throw new Error('403 Forbidden: Authority denied. Only an Inventory Manager can reject adjustments.');
+    }
+
+    const adj = adjustments.find((a) => a.id === adjustmentId);
+    if (!adj) return false;
+
+    const nowIso = new Date().toISOString();
+    setAdjustments((prev) =>
+      prev.map((a) =>
+        a.id === adjustmentId
+          ? {
+              ...a,
+              status: 'rejected',
+              rejectedBy: currentUser.name,
+              rejectedAt: nowIso,
+              rejectionReason: reason,
+            }
+          : a
+      )
+    );
+
+    setStaffActivity((prev) =>
+      prev.map((act) =>
+        act.reference === adj.adjustmentNumber ? { ...act, status: 'Rejected' } : act
+      )
+    );
+
+    return true;
+  };
+
+  const validateStockAdjustment = (adjustmentId: string): boolean => {
+    return approveAdjustment(adjustmentId);
+  };
+
+  // Unified Approval Action Dispatchers
+  const approvePendingOperation = (item: PendingApprovalItem): boolean => {
+    switch (item.operationType) {
+      case 'Receipt':
+        return approveReceipt(item.id);
+      case 'Delivery':
+        return approveDelivery(item.id);
+      case 'Internal Transfer':
+        return approveTransfer(item.id);
+      case 'Adjustment':
+        return approveAdjustment(item.id);
+      default:
+        return false;
+    }
+  };
+
+  const rejectPendingOperation = (item: PendingApprovalItem, reason?: string): boolean => {
+    switch (item.operationType) {
+      case 'Receipt':
+        return rejectReceipt(item.id, reason);
+      case 'Delivery':
+        return rejectDelivery(item.id, reason);
+      case 'Internal Transfer':
+        return rejectTransfer(item.id, reason);
+      case 'Adjustment':
+        return rejectAdjustment(item.id, reason);
+      default:
+        return false;
+    }
+  };
+
+  // Reorder Rules
   const addReorderRule = (rule: Omit<ReorderingRule, 'id'>) => {
     if (currentUser.role !== 'inventory_manager') {
       throw new Error('403 Forbidden: Only Inventory Managers can configure reordering rules.');
@@ -1099,7 +1467,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     setReorderRules((prev) => prev.filter((r) => r.id !== id));
   };
 
-  // Warehouses & Locations (Manager Only)
+  // Warehouses & Locations
   const addWarehouse = (data: { name: string; code: string; address: string }): Warehouse => {
     if (currentUser.role !== 'inventory_manager') {
       throw new Error('403 Forbidden: Only Inventory Managers can configure warehouses.');
@@ -1156,7 +1524,99 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  // Calculate dynamic KPIs
+  // =========================================================================
+  // PENDING APPROVALS QUEUE (FOR MANAGER DASHBOARD)
+  // =========================================================================
+  const pendingApprovals: PendingApprovalItem[] = useMemo(() => {
+    const items: PendingApprovalItem[] = [];
+
+    // 1. Receipts awaiting approval
+    receipts
+      .filter((r) => r.status === 'awaiting_approval' || r.status === 'waiting')
+      .forEach((r) => {
+        const firstItem = r.items[0];
+        items.push({
+          id: r.id,
+          operationType: 'Receipt',
+          documentId: r.receiptNumber,
+          staffMember: r.submittedBy || 'Marcus Miller',
+          warehouse: r.destinationLocationName.split('→')[0].trim() || 'Main Central Hub',
+          warehouseId: r.destinationWarehouseId,
+          quantity: firstItem ? `${firstItem.quantityReceived || firstItem.quantityExpected} ${firstItem.unitOfMeasure}` : '100 units',
+          timestamp: r.submittedAt || r.createdAt,
+          status: 'AWAITING APPROVAL',
+          details: `${r.supplierName} • Location: ${r.destinationLocationName}`,
+          rawOperation: r,
+        });
+      });
+
+    // 2. Deliveries awaiting approval
+    deliveries
+      .filter((d) => d.status === 'awaiting_approval')
+      .forEach((d) => {
+        const firstItem = d.items[0];
+        items.push({
+          id: d.id,
+          operationType: 'Delivery',
+          documentId: d.deliveryNumber,
+          staffMember: d.submittedBy || 'Marcus Miller',
+          warehouse: d.sourceLocationName.split('→')[0].trim() || 'Main Central Hub',
+          warehouseId: d.sourceWarehouseId,
+          quantity: firstItem ? `${firstItem.quantityPacked || firstItem.quantityRequested} ${firstItem.unitOfMeasure}` : '10 units',
+          timestamp: d.submittedAt || d.createdAt,
+          status: 'AWAITING APPROVAL',
+          details: `${d.customerName} • Picked: ${firstItem?.quantityPicked || 10}, Packed: ${firstItem?.quantityPacked || 10}`,
+          rawOperation: d,
+        });
+      });
+
+    // 3. Transfers awaiting approval
+    transfers
+      .filter((t) => t.status === 'awaiting_approval')
+      .forEach((t) => {
+        const firstItem = t.items[0];
+        items.push({
+          id: t.id,
+          operationType: 'Internal Transfer',
+          documentId: t.transferNumber,
+          staffMember: t.submittedBy || 'Marcus Miller',
+          warehouse: t.sourceLocationName.split('[')[0].trim() || 'Main Central Hub',
+          warehouseId: t.sourceWarehouseId,
+          quantity: firstItem ? `${firstItem.quantity} ${firstItem.unitOfMeasure}` : '25 units',
+          timestamp: t.submittedAt || t.scheduledDate,
+          status: 'AWAITING APPROVAL',
+          details: `${t.sourceLocationName} → ${t.destinationLocationName}`,
+          rawOperation: t,
+        });
+      });
+
+    // 4. Adjustments awaiting approval
+    adjustments
+      .filter((a) => a.status === 'awaiting_approval' || a.status === 'waiting')
+      .forEach((a) => {
+        const firstItem = a.items[0];
+        const diffStr = firstItem ? `${firstItem.difference > 0 ? '+' : ''}${firstItem.difference} ${firstItem.unitOfMeasure}` : '-3 units';
+        items.push({
+          id: a.id,
+          operationType: 'Adjustment',
+          documentId: a.adjustmentNumber,
+          staffMember: a.submittedBy || a.createdByName || 'Marcus Miller',
+          warehouse: a.warehouseName || 'Main Central Hub',
+          warehouseId: a.warehouseId,
+          quantity: diffStr,
+          timestamp: a.submittedAt || a.createdAt,
+          status: 'AWAITING APPROVAL',
+          details: firstItem
+            ? `${firstItem.productName} • System: ${firstItem.recordedQuantity}, Count: ${firstItem.physicalQuantity}, Diff: ${firstItem.difference} (${a.reason})`
+            : `Physical count adjustment (${a.reason})`,
+          rawOperation: a,
+        });
+      });
+
+    return items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [receipts, deliveries, transfers, adjustments]);
+
+  // Global KPIs
   const kpis = useMemo(() => {
     let totalUnits = 0;
     let lowStock = 0;
@@ -1173,9 +1633,9 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    const pendingReceipts = receipts.filter((r) => r.status === 'ready' || r.status === 'waiting').length;
-    const pendingDeliveries = deliveries.filter((d) => d.status === 'ready' || d.status === 'waiting').length;
-    const scheduledTransfers = transfers.filter((t) => t.status === 'ready' || t.status === 'waiting').length;
+    const pendingReceipts = receipts.filter((r) => r.status === 'ready' || r.status === 'in_progress').length;
+    const pendingDeliveries = deliveries.filter((d) => d.status === 'ready' || d.status === 'in_progress').length;
+    const scheduledTransfers = transfers.filter((t) => t.status === 'ready' || t.status === 'in_progress').length;
 
     return {
       totalUnitsInStock: totalUnits,
@@ -1185,8 +1645,9 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       pendingReceiptsCount: pendingReceipts,
       pendingDeliveriesCount: pendingDeliveries,
       scheduledTransfersCount: scheduledTransfers,
+      pendingApprovalsCount: pendingApprovals.length,
     };
-  }, [products, receipts, deliveries, transfers]);
+  }, [products, receipts, deliveries, transfers, pendingApprovals]);
 
   // Low Stock Alerts
   const lowStockAlerts = useMemo(() => {
@@ -1216,7 +1677,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     return alerts;
   }, [products, reorderRules]);
 
-  // Role-based scoped data selectors
+  // Role-Based Scoped Data
   const isStaff = currentUser.role === 'warehouse_staff';
   const staffWhId = currentUser.warehouseId || 'wh-main';
 
@@ -1257,16 +1718,13 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
   }, [ledger, isStaff, staffWhId, warehouses]);
 
   const scopedKpis = useMemo(() => {
-    const pendingApprovals = adjustments.filter((a) => a.status === 'waiting').length;
-
     if (!isStaff) {
       return {
         ...kpis,
-        pendingApprovalsCount: pendingApprovals,
+        pendingApprovalsCount: pendingApprovals.length,
       };
     }
 
-    // Scoped specifically to staff's assigned warehouse
     let totalUnits = 0;
     let lowStock = 0;
     let outOfStock = 0;
@@ -1284,9 +1742,10 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    const pendingReceipts = scopedReceipts.filter((r) => r.status === 'ready' || r.status === 'waiting').length;
-    const pendingDeliveries = scopedDeliveries.filter((d) => d.status === 'ready' || d.status === 'waiting').length;
-    const scheduledTransfers = scopedTransfers.filter((t) => t.status === 'ready' || t.status === 'waiting').length;
+    const pendingReceipts = scopedReceipts.filter((r) => r.status === 'ready' || r.status === 'in_progress').length;
+    const pendingDeliveries = scopedDeliveries.filter((d) => d.status === 'ready' || d.status === 'in_progress').length;
+    const scheduledTransfers = scopedTransfers.filter((t) => t.status === 'ready' || t.status === 'in_progress').length;
+    const pendingCountingTasks = scopedAdjustments.filter((a) => a.status === 'ready' || a.status === 'in_progress').length;
 
     return {
       totalUnitsInStock: totalUnits,
@@ -1296,9 +1755,9 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
       pendingReceiptsCount: pendingReceipts,
       pendingDeliveriesCount: pendingDeliveries,
       scheduledTransfersCount: scheduledTransfers,
-      pendingApprovalsCount: pendingApprovals,
+      pendingApprovalsCount: pendingCountingTasks,
     };
-  }, [isStaff, staffWhId, kpis, products, scopedReceipts, scopedDeliveries, scopedTransfers, adjustments]);
+  }, [isStaff, staffWhId, kpis, products, scopedReceipts, scopedDeliveries, scopedTransfers, scopedAdjustments, pendingApprovals]);
 
   const scopedLowStockAlerts = useMemo(() => {
     if (!isStaff) return lowStockAlerts;
@@ -1341,6 +1800,7 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
     setTransfers(INITIAL_TRANSFERS);
     setAdjustments(INITIAL_ADJUSTMENTS);
     setLedger(INITIAL_LEDGER);
+    setStaffActivity(INITIAL_STAFF_ACTIVITY);
     setReorderRules(INITIAL_REORDER_RULES);
   };
 
@@ -1359,6 +1819,8 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         transfers,
         adjustments,
         ledger,
+        staffActivity,
+        pendingApprovals,
         addProduct,
         updateProduct,
         deleteProduct,
@@ -1366,16 +1828,32 @@ export function InventoryProvider({ children }: { children: React.ReactNode }) {
         getTotalStockForProduct,
         getAvailableStockForProduct,
         createReceipt,
+        confirmPhysicalIntake,
+        approveReceipt,
+        rejectReceipt,
         validateReceipt,
         cancelReceipt,
         createDelivery,
+        startPicking,
+        confirmPacking,
+        submitDelivery,
+        approveDelivery,
+        rejectDelivery,
         advanceDeliveryStage,
         cancelDelivery,
         createInternalTransfer,
+        reportTransferComplete,
+        approveTransfer,
+        rejectTransfer,
         validateTransfer,
         cancelTransfer,
         createStockAdjustment,
+        submitStockCount,
+        approveAdjustment,
+        rejectAdjustment,
         validateStockAdjustment,
+        approvePendingOperation,
+        rejectPendingOperation,
         addReorderRule,
         updateReorderRule,
         deleteReorderRule,

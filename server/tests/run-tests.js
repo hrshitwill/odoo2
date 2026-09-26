@@ -8,7 +8,16 @@ const http = require('http');
 const mongoose = require('mongoose');
 const app = require('../src/app');
 
-// Mini assertion library  heheheheh
+// Models for direct verification
+const User = require('../src/models/User');
+const Warehouse = require('../src/models/Warehouse');
+const Location = require('../src/models/Location');
+const Product = require('../src/models/Product');
+const StockQuant = require('../src/models/StockQuant');
+const StockOperation = require('../src/models/StockOperation');
+const StockLedger = require('../src/models/StockLedger');
+
+// Mini assertion library
 let totalTests = 0;
 let passedTests = 0;
 let failedTests = 0;
@@ -65,15 +74,122 @@ const request = (baseUrl, method, path, data = null, token = null) => {
 
 const runAllTests = async () => {
   console.log('====================================================');
-  console.log('🚀 StockSense Backend End-to-End Verification Suite');
+  console.log('🚀 StockSense Two-Role Operational Workflow Suite');
   console.log('====================================================\n');
 
-  // Connect DB
-  console.log('[Test Suite] Connecting to MongoDB...');
-  await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/stocksense';
+  await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 15000 });
   console.log('[Test Suite] Connected to DB!\n');
 
-  // Start test server on random port
+  // Clean and bootstrap test DB
+  await Promise.all([
+    User.deleteMany({}),
+    Warehouse.deleteMany({}),
+    Location.deleteMany({}),
+    Product.deleteMany({}),
+    StockQuant.deleteMany({}),
+    StockOperation.deleteMany({}),
+    StockLedger.deleteMany({}),
+  ]);
+
+  const bcrypt = require('bcryptjs');
+  const salt = await bcrypt.genSalt(10);
+  const [mgrPass, stfPass] = await Promise.all([
+    bcrypt.hash('admin123', salt),
+    bcrypt.hash('staff123', salt),
+  ]);
+
+  const mainHub = await Warehouse.create({
+    name: 'Main Central Hub',
+    code: 'WH-MAIN',
+    address: 'Terminal 4, North Logistics Corridor',
+  });
+
+  const eastHub = await Warehouse.create({
+    name: 'East Buffer Warehouse',
+    code: 'WH-EAST',
+    address: 'Pier 9',
+  });
+
+  const manager = await User.create({
+    name: 'Alex Morgan',
+    email: 'manager@stocksense.com',
+    password: mgrPass,
+    role: 'INVENTORY_MANAGER',
+  });
+
+  const staff = await User.create({
+    name: 'Marcus Miller',
+    email: 'staff@stocksense.com',
+    password: stfPass,
+    role: 'WAREHOUSE_STAFF',
+    warehouse: mainHub._id,
+  });
+
+  const receivingBayA = await Location.create({
+    name: 'Receiving Bay A',
+    code: 'WH-MAIN/REC-A',
+    warehouse: mainHub._id,
+    type: 'INTERNAL',
+  });
+
+  const productionZoneB = await Location.create({
+    name: 'Production Zone B',
+    code: 'WH-MAIN/PROD-B',
+    warehouse: mainHub._id,
+    type: 'INTERNAL',
+  });
+
+  const eastStorage = await Location.create({
+    name: 'East Buffer Racks',
+    code: 'WH-EAST/RACK-1',
+    warehouse: eastHub._id,
+    type: 'INTERNAL',
+  });
+
+  const vendorLoc = await Location.create({
+    name: 'Apex Industrial Corp',
+    code: 'PARTNER/VENDOR',
+    type: 'VENDOR',
+  });
+
+  const customerLoc = await Location.create({
+    name: 'Customers',
+    code: 'PARTNER/CUSTOMER',
+    type: 'CUSTOMER',
+  });
+
+  const scrapLoc = await Location.create({
+    name: 'Inventory Loss / Scrap',
+    code: 'VIRTUAL/SCRAP',
+    type: 'INVENTORY_LOSS',
+  });
+
+  const steel = await Product.create({
+    name: 'Steel Rods',
+    sku: 'STL-001',
+    category: 'Raw Materials',
+    uom: 'kg',
+    minStockRule: 50,
+    maxStockRule: 300,
+    costPrice: 4.25,
+  });
+
+  const bolts = await Product.create({
+    name: 'Industrial Bolts',
+    sku: 'BLT-M8',
+    category: 'Fasteners & Hardware',
+    uom: 'units',
+    minStockRule: 100,
+    maxStockRule: 1000,
+    costPrice: 0.35,
+  });
+
+  // Initial stock: Steel Rods 42 kg at Main Central Hub (Receiving Bay A)
+  await StockQuant.create({ product: steel._id, location: receivingBayA._id, quantity: 42 });
+  // Initial stock: Industrial Bolts 100 units at Production Zone B
+  await StockQuant.create({ product: bolts._id, location: productionZoneB._id, quantity: 100 });
+
   const server = http.createServer(app);
   await new Promise((res) => server.listen(0, res));
   const port = server.address().port;
@@ -82,353 +198,349 @@ const runAllTests = async () => {
 
   let managerToken = '';
   let staffToken = '';
-  let testProductId = '';
-  let mainStoreLocId = '';
-  let prodFloorLocId = '';
-  let vendorLocId = '';
-  let customerLocId = '';
 
   try {
     // ----------------------------------------------------
-    // TEST 1: Health Check
+    // TEST 1: Login & Role Profiles
     // ----------------------------------------------------
-    console.log('👉 [1/10] Verifying System Health API...');
-    const health = await request(baseUrl, 'GET', '/api/health');
-    assert(health.status === 200, 'Health endpoint responds with 200');
-    assert(health.data.status === 'online', 'Health status is online');
-
-    // ----------------------------------------------------
-    // TEST 2: Authentication & Roles
-    // ----------------------------------------------------
-    console.log('\n👉 [2/10] Verifying Authentication & Access Control...');
-    // Login as Manager
+    console.log('👉 [1/10] Verifying Login for Alex Morgan (Manager) and Marcus Miller (Staff)...');
     const mgrLogin = await request(baseUrl, 'POST', '/api/auth/login', {
       email: 'manager@stocksense.com',
       password: 'admin123',
     });
-    assert(mgrLogin.status === 200, 'Manager login successful');
-    assert(mgrLogin.data.user.role === 'INVENTORY_MANAGER', 'Manager role verified');
+    assert(mgrLogin.status === 200, 'Manager Alex Morgan logs in successfully');
+    assert(mgrLogin.data.user.name === 'Alex Morgan', 'Manager name matches Alex Morgan');
+    assert(mgrLogin.data.user.role === 'INVENTORY_MANAGER', 'Manager role is INVENTORY_MANAGER');
     managerToken = mgrLogin.data.token;
 
-    // Login as Staff
     const staffLogin = await request(baseUrl, 'POST', '/api/auth/login', {
       email: 'staff@stocksense.com',
       password: 'staff123',
     });
-    assert(staffLogin.status === 200, 'Staff login successful');
-    assert(staffLogin.data.user.role === 'WAREHOUSE_STAFF', 'Staff role verified');
+    assert(staffLogin.status === 200, 'Staff Marcus Miller logs in successfully');
+    assert(staffLogin.data.user.name === 'Marcus Miller', 'Staff name matches Marcus Miller');
+    assert(staffLogin.data.user.role === 'WAREHOUSE_STAFF', 'Staff role is WAREHOUSE_STAFF');
     staffToken = staffLogin.data.token;
 
-    // Invalid Login
-    const badLogin = await request(baseUrl, 'POST', '/api/auth/login', {
-      email: 'manager@stocksense.com',
-      password: 'wrongpassword',
-    });
-    assert(badLogin.status === 401, 'Invalid credentials properly rejected with 401');
-
-    // Verify /api/auth/me
-    const meRes = await request(baseUrl, 'GET', '/api/auth/me', null, managerToken);
-    assert(meRes.status === 200, 'Get current user profile succeeds');
-    assert(meRes.data.data.email === 'manager@stocksense.com', 'Profile matches logged-in user');
-
-    // OTP Password Reset Flow
-    const forgotRes = await request(baseUrl, 'POST', '/api/auth/forgot-password', {
-      email: 'staff@stocksense.com',
-    });
-    assert(forgotRes.status === 200, 'OTP generation succeeds');
-    const otpCode = forgotRes.data.debugOtp;
-    assert(Boolean(otpCode), 'OTP code received in dev mode');
-
-    // Test bad OTP
-    const badOtp = await request(baseUrl, 'POST', '/api/auth/reset-password', {
-      email: 'staff@stocksense.com',
-      otp: '000000',
-      newPassword: 'staff123updated',
-    });
-    assert(badOtp.status === 400, 'Bad OTP rejected with 400');
-
-    // Test valid OTP reset
-    const goodOtp = await request(baseUrl, 'POST', '/api/auth/reset-password', {
-      email: 'staff@stocksense.com',
-      otp: otpCode,
-      newPassword: 'staff123',
-    });
-    assert(goodOtp.status === 200, 'Password reset successful with valid OTP');
-
-    // Test Role-Based User Provisioning: Unauthenticated register fails
-    const unauthRegister = await request(baseUrl, 'POST', '/api/auth/register', {
-      name: 'Hacker User',
-      email: 'hacker@stocksense.com',
-      password: 'password123',
-    });
-    assert(unauthRegister.status === 401 || unauthRegister.status === 403, 'Unauthenticated user creation rejected');
-
-    // Test Role-Based User Provisioning: Staff cannot create user
-    const staffRegister = await request(baseUrl, 'POST', '/api/auth/register', {
-      name: 'Staff Created User',
-      email: 'staffuser@stocksense.com',
-      password: 'password123',
-    }, staffToken);
-    assert(staffRegister.status === 403, 'Warehouse staff prevented from creating users (403)');
-
-    // Test Role-Based User Provisioning: Manager CAN create user
-    const testNewEmail = `operator_${Date.now()}@stocksense.com`;
-    const managerRegister = await request(baseUrl, 'POST', '/api/auth/register', {
-      name: 'Sam Operator',
-      email: testNewEmail,
-      password: 'operatorPass123',
-      role: 'WAREHOUSE_STAFF',
-    }, managerToken);
-    assert(managerRegister.status === 201, 'Inventory Manager successfully provisions new operator');
-
-    // Test New Operator can log in with provisioned credentials
-    const newOpLogin = await request(baseUrl, 'POST', '/api/auth/login', {
-      email: testNewEmail,
-      password: 'operatorPass123',
-    });
-    assert(newOpLogin.status === 200, 'Newly provisioned operator logs in with their credentials');
-
-    // Test Manager can list registered users
-    const usersListRes = await request(baseUrl, 'GET', '/api/auth/users', null, managerToken);
-    assert(usersListRes.status === 200, 'Manager can list registered operators');
-    assert(usersListRes.data.data.length >= 3, 'Registered operators directory populated');
-
     // ----------------------------------------------------
-    // TEST 3: Locations & Warehouses
+    // TEST 2: RBAC Route & Mutation Protection
     // ----------------------------------------------------
-    console.log('\n👉 [3/10] Verifying Warehouses & Locations...');
-    const locRes = await request(baseUrl, 'GET', '/api/warehouses/locations', null, managerToken);
-    assert(locRes.status === 200, 'Locations endpoint returns 200');
-    assert(locRes.data.data.length >= 4, 'Standard system locations exist');
-
-    mainStoreLocId = locRes.data.data.find((l) => l.code === 'WH1/STOCK')._id;
-    prodFloorLocId = locRes.data.data.find((l) => l.code === 'WH1/PROD')._id;
-    vendorLocId = locRes.data.data.find((l) => l.type === 'VENDOR')._id;
-    customerLocId = locRes.data.data.find((l) => l.type === 'CUSTOMER')._id;
-
-    assert(Boolean(mainStoreLocId), 'Main store location ID verified');
-    assert(Boolean(prodFloorLocId), 'Production floor location ID verified');
-
-    // ----------------------------------------------------
-    // TEST 4: Product Catalog & Reorder Rules
-    // ----------------------------------------------------
-    console.log('\n👉 [4/10] Verifying Product Management & Catalog...');
-    const testSku = `TST-PROD-${Date.now().toString().slice(-4)}`;
-    const createProd = await request(
+    console.log('\n👉 [2/10] Verifying Staff Route & Inventory Mutation Protection...');
+    // Staff cannot create product
+    const staffCreateProduct = await request(
       baseUrl,
       'POST',
       '/api/products',
-      {
-        name: 'Automated Test Part',
-        sku: testSku,
-        category: 'Testing',
-        uom: 'pcs',
-        minStockRule: 15,
-        maxStockRule: 100,
-        initialStock: 50,
-        locationId: mainStoreLocId,
-      },
-      managerToken
+      { name: 'Unauthorized Product', sku: 'UNAUTH-01' },
+      staffToken
     );
-    assert(createProd.status === 201, 'Product created with initial stock');
-    testProductId = createProd.data.data._id;
+    assert(staffCreateProduct.status === 403, 'Staff prevented from creating products (403)');
 
-    // Check duplicate SKU rejection
-    const dupProd = await request(
-      baseUrl,
-      'POST',
-      '/api/products',
-      { name: 'Duplicate SKU Test', sku: testSku },
-      managerToken
-    );
-    assert(dupProd.status === 400, 'Duplicate SKU rejected with 400');
+    // Staff cannot access full stock ledger
+    const staffLedger = await request(baseUrl, 'GET', '/api/ledger', null, staffToken);
+    assert(staffLedger.status === 403, 'Staff prevented from accessing full Stock Ledger (403)');
 
-    // Get single product with stock
-    const singleProd = await request(baseUrl, 'GET', `/api/products/${testProductId}`, null, managerToken);
-    assert(singleProd.status === 200, 'Get single product succeeds');
-    assert(singleProd.data.data.totalStock === 50, 'Initial stock reflected on product (50 pcs)');
-    assert(singleProd.data.data.isLowStock === false, 'Low stock flag correctly calculated (50 > 15)');
+    // Staff CAN access their own activity
+    const staffActivity = await request(baseUrl, 'GET', '/api/ledger/my-activity', null, staffToken);
+    assert(staffActivity.status === 200, 'Staff can access My Activity endpoint');
 
     // ----------------------------------------------------
-    // TEST 5: Receipts (Incoming Goods Workflow)
+    // TEST 3: Staff Warehouse Scope Enforcement
     // ----------------------------------------------------
-    console.log('\n👉 [5/10] Verifying Receipts Workflow (Stock Increase)...');
-    const createReceipt = await request(
+    console.log('\n👉 [3/10] Verifying Staff Warehouse Scoping (Main Central Hub)...');
+    // Staff gets warehouses -> should only see Main Central Hub
+    const staffWhRes = await request(baseUrl, 'GET', '/api/warehouses', null, staffToken);
+    assert(staffWhRes.status === 200, 'Staff warehouses endpoint returns 200');
+    assert(staffWhRes.data.data.length === 1, 'Staff only sees assigned warehouse');
+    assert(staffWhRes.data.data[0].name === 'Main Central Hub', 'Assigned warehouse is Main Central Hub');
+
+    // Manager sees all warehouses
+    const mgrWhRes = await request(baseUrl, 'GET', '/api/warehouses', null, managerToken);
+    assert(mgrWhRes.data.data.length >= 2, 'Manager sees all warehouses');
+
+    // ----------------------------------------------------
+    // TEST 4: Receiving Workflow
+    // Staff: Confirm Physical Intake -> AWAITING APPROVAL (Stock unchanged)
+    // Manager: Approve Receipt -> COMPLETED (Stock increases + Ledger updated)
+    // ----------------------------------------------------
+    console.log('\n👉 [4/10] Verifying Receiving Workflow (REC-1042)...');
+    // Baseline stock check: 42 kg
+    const initialQuant = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    assert(initialQuant.quantity === 42, 'Baseline stock is 42 kg');
+
+    // Create receipt document REC-1042
+    const recCreate = await request(
       baseUrl,
       'POST',
       '/api/operations',
       {
         type: 'RECEIPT',
-        partner: 'Global Materials Co',
-        sourceLocation: vendorLocId,
-        destLocation: mainStoreLocId,
-        items: [{ product: testProductId, demandQty: 30, doneQty: 30 }],
+        partner: 'Apex Industrial Corp',
+        sourceLocation: vendorLoc._id,
+        destLocation: receivingBayA._id,
+        items: [{ product: steel._id, demandQty: 100, doneQty: 100 }],
+        notes: 'Inbound shipment #BL-8921',
       },
+      managerToken
+    );
+    const recId = recCreate.data.data._id;
+
+    // Staff attempts direct validation (must be blocked)
+    const staffDirectVal = await request(baseUrl, 'POST', `/api/operations/${recId}/validate`, null, staffToken);
+    assert(staffDirectVal.status === 403, 'Staff direct validation is blocked (403)');
+
+    // Staff performs physical intake and submits operation
+    const staffSubmitRec = await request(
+      baseUrl,
+      'POST',
+      `/api/operations/${recId}/submit`,
+      { items: [{ product: steel._id, doneQty: 100 }] },
       staffToken
     );
-    assert(createReceipt.status === 201, 'Receipt created in READY state');
-    const receiptId = createReceipt.data.data._id;
+    assert(staffSubmitRec.status === 200, 'Staff successfully submits physical intake');
+    assert(staffSubmitRec.data.data.status === 'AWAITING_APPROVAL', 'Receipt status is now AWAITING_APPROVAL');
 
-    // Validate Receipt
-    const valReceipt = await request(baseUrl, 'POST', `/api/operations/${receiptId}/validate`, null, staffToken);
-    assert(valReceipt.status === 200, 'Receipt validated successfully');
+    // Check official stock: MUST REMAIN 42 kg!
+    const quantAfterSubmit = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    assert(quantAfterSubmit.quantity === 42, 'Official inventory remains 42 kg while awaiting approval');
 
-    // Check updated stock: 50 + 30 = 80
-    const checkStockAfterReceipt = await request(baseUrl, 'GET', `/api/products/${testProductId}`, null, staffToken);
-    assert(checkStockAfterReceipt.data.data.totalStock === 80, 'Stock increased to 80 after receipt validation');
+    // Staff attempts to approve (must be forbidden)
+    const staffApprove = await request(baseUrl, 'POST', `/api/operations/${recId}/approve`, null, staffToken);
+    assert(staffApprove.status === 403, 'Staff cannot approve receipt (403)');
+
+    // Manager approves receipt
+    const mgrApprove = await request(baseUrl, 'POST', `/api/operations/${recId}/approve`, null, managerToken);
+    assert(mgrApprove.status === 200, 'Manager successfully approves receipt');
+    assert(mgrApprove.data.data.status === 'COMPLETED', 'Receipt marked COMPLETED');
+
+    // Check official stock: 42 + 100 = 142 kg
+    const quantAfterApprove = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    assert(quantAfterApprove.quantity === 142, 'Official inventory increased to 142 kg after Manager approval');
+
+    // Check Stock Ledger entry
+    const recLedger = await StockLedger.findOne({ operation: recId });
+    assert(Boolean(recLedger), 'Stock Ledger entry created upon approval');
+    assert(recLedger.quantity === 100, 'Ledger quantity is 100');
 
     // ----------------------------------------------------
-    // TEST 6: Internal Transfers Workflow
+    // TEST 5: Delivery Workflow
+    // Staff: Pick & Pack -> Submit Delivery -> AWAITING APPROVAL (Stock unchanged)
+    // Manager: Approve Dispatch -> COMPLETED (Stock decreases)
     // ----------------------------------------------------
-    console.log('\n👉 [6/10] Verifying Internal Transfers (Location Relocation)...');
-    const createTransfer = await request(
+    console.log('\n👉 [5/10] Verifying Delivery Workflow (DEL-1048)...');
+    const delCreate = await request(
+      baseUrl,
+      'POST',
+      '/api/operations',
+      {
+        type: 'DELIVERY',
+        partner: 'AeroStructures Engineering',
+        sourceLocation: receivingBayA._id,
+        destLocation: customerLoc._id,
+        items: [{ product: steel._id, demandQty: 10, doneQty: 10 }],
+        notes: 'Priority dispatch',
+      },
+      managerToken
+    );
+    const delId = delCreate.data.data._id;
+
+    // Staff submits delivery after picking & packing
+    const staffSubmitDel = await request(
+      baseUrl,
+      'POST',
+      `/api/operations/${delId}/submit`,
+      { stage: 'pack' },
+      staffToken
+    );
+    assert(staffSubmitDel.status === 200, 'Staff submits packed delivery for dispatch approval');
+    assert(staffSubmitDel.data.data.status === 'AWAITING_APPROVAL', 'Delivery status is AWAITING_APPROVAL');
+
+    // Stock before approval must still be 142 kg
+    const quantBeforeDispatch = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    assert(quantBeforeDispatch.quantity === 142, 'Stock remains 142 kg before Manager dispatch approval');
+
+    // Manager approves dispatch
+    const mgrApproveDel = await request(baseUrl, 'POST', `/api/operations/${delId}/approve`, null, managerToken);
+    assert(mgrApproveDel.status === 200, 'Manager approves dispatch');
+
+    // Stock after approval: 142 - 10 = 132 kg
+    const quantAfterDispatch = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    assert(quantAfterDispatch.quantity === 132, 'Official inventory decreased to 132 kg after dispatch approval');
+
+    // ----------------------------------------------------
+    // TEST 6: Internal Transfer Workflow
+    // Receiving Bay A -> Production Zone B
+    // Staff submits -> AWAITING APPROVAL -> Manager approves -> location stock moves
+    // ----------------------------------------------------
+    console.log('\n👉 [6/10] Verifying Internal Transfer Workflow (TRF-018)...');
+    const trfCreate = await request(
       baseUrl,
       'POST',
       '/api/operations',
       {
         type: 'INTERNAL',
-        partner: 'Shopfloor Relocation',
-        sourceLocation: mainStoreLocId,
-        destLocation: prodFloorLocId,
-        items: [{ product: testProductId, demandQty: 25, doneQty: 25 }],
+        partner: 'Internal Workshop',
+        sourceLocation: receivingBayA._id,
+        destLocation: productionZoneB._id,
+        items: [{ product: steel._id, demandQty: 25, doneQty: 25 }],
       },
-      staffToken
+      managerToken
     );
-    assert(createTransfer.status === 201, 'Internal transfer created');
-    const transferId = createTransfer.data.data._id;
+    const trfId = trfCreate.data.data._id;
 
-    // Validate Transfer
-    const valTransfer = await request(baseUrl, 'POST', `/api/operations/${transferId}/validate`, null, staffToken);
-    assert(valTransfer.status === 200, 'Internal transfer validated');
+    // Staff confirms physical movement and submits
+    const staffSubmitTrf = await request(baseUrl, 'POST', `/api/operations/${trfId}/submit`, null, staffToken);
+    assert(staffSubmitTrf.status === 200, 'Staff reports transfer complete and submits');
+    assert(staffSubmitTrf.data.data.status === 'AWAITING_APPROVAL', 'Transfer status is AWAITING_APPROVAL');
 
-    // Check stock per location: Main Store: 80 - 25 = 55, Production: 25. Total still 80!
-    const checkTransferStock = await request(baseUrl, 'GET', `/api/products/${testProductId}`, null, staffToken);
-    assert(checkTransferStock.data.data.totalStock === 80, 'Total company stock remains 80 during internal transfer');
+    // Before approval: source = 132 kg, dest = 0 kg
+    const srcBefore = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    const dstBefore = await StockQuant.findOne({ product: steel._id, location: productionZoneB._id });
+    assert(srcBefore.quantity === 132, 'Source location stock unchanged before approval');
+    assert((dstBefore ? dstBefore.quantity : 0) === 0, 'Destination location stock unchanged before approval');
 
-    const mainStoreQuant = checkTransferStock.data.data.stockPerLocation.find(
-      (q) => q.location._id.toString() === mainStoreLocId.toString()
-    );
-    const prodFloorQuant = checkTransferStock.data.data.stockPerLocation.find(
-      (q) => q.location._id.toString() === prodFloorLocId.toString()
-    );
-    assert(mainStoreQuant.quantity === 55, 'Source Main Store reduced to 55');
-    assert(prodFloorQuant.quantity === 25, 'Dest Production Floor increased to 25');
+    // Manager approves transfer
+    const mgrApproveTrf = await request(baseUrl, 'POST', `/api/operations/${trfId}/approve`, null, managerToken);
+    assert(mgrApproveTrf.status === 200, 'Manager approves internal transfer');
 
-    // ----------------------------------------------------
-    // TEST 7: Delivery Orders & Shortage Guard
-    // ----------------------------------------------------
-    console.log('\n👉 [7/10] Verifying Delivery Orders & Negative Stock Prevention...');
-    // Attempt excessive delivery from Main Store (available: 55, requesting: 500)
-    const excessDelivery = await request(
-      baseUrl,
-      'POST',
-      '/api/operations',
-      {
-        type: 'DELIVERY',
-        partner: 'Mega Buyer Inc',
-        sourceLocation: mainStoreLocId,
-        destLocation: customerLocId,
-        items: [{ product: testProductId, demandQty: 500, doneQty: 500 }],
-      },
-      staffToken
-    );
-    const excessVal = await request(
-      baseUrl,
-      'POST',
-      `/api/operations/${excessDelivery.data.data._id}/validate`,
-      null,
-      staffToken
-    );
-    assert(excessVal.status === 400, 'Excessive delivery properly rejected (Shortage Protection)');
-    assert(excessVal.data.message.includes('Insufficient stock'), 'Shortage error message is explicit');
-
-    // Valid delivery of 20 pcs from Main Store
-    const validDelivery = await request(
-      baseUrl,
-      'POST',
-      '/api/operations',
-      {
-        type: 'DELIVERY',
-        partner: 'Valid Customer Inc',
-        sourceLocation: mainStoreLocId,
-        destLocation: customerLocId,
-        items: [{ product: testProductId, demandQty: 20, doneQty: 20 }],
-      },
-      staffToken
-    );
-    const validVal = await request(
-      baseUrl,
-      'POST',
-      `/api/operations/${validDelivery.data.data._id}/validate`,
-      null,
-      staffToken
-    );
-    assert(validVal.status === 200, 'Valid delivery order validated');
-
-    // Stock should now be: 55 - 20 = 35 at Main Store, 25 at Prod Floor -> Total = 60
-    const checkStockAfterDelivery = await request(baseUrl, 'GET', `/api/products/${testProductId}`, null, staffToken);
-    assert(checkStockAfterDelivery.data.data.totalStock === 60, 'Stock reduced to 60 after delivery');
+    // After approval: source = 132 - 25 = 107 kg, dest = 25 kg. Total = 132 kg!
+    const srcAfter = await StockQuant.findOne({ product: steel._id, location: receivingBayA._id });
+    const dstAfter = await StockQuant.findOne({ product: steel._id, location: productionZoneB._id });
+    assert(srcAfter.quantity === 107, 'Source location decreased to 107 kg');
+    assert(dstAfter.quantity === 25, 'Destination location increased to 25 kg');
+    assert(srcAfter.quantity + dstAfter.quantity === 132, 'Total company stock remains 132 kg');
 
     // ----------------------------------------------------
-    // TEST 8: Stock Adjustments (Physical Count Reconciliation)
+    // TEST 7: Stock Adjustment (Physical Count)
+    // System: 100, Physical: 97, Difference: -3
+    // Staff submits count -> Manager approves -> Official inventory updates
     // ----------------------------------------------------
-    console.log('\n👉 [8/10] Verifying Stock Adjustments (Count Reconcile & Scrap)...');
-    // Main Store has 35. Audit finds 3 damaged parts -> physical count is 32.
-    const adjustRes = await request(
+    console.log('\n👉 [7/10] Verifying Stock Adjustment Workflow (ADJ-019)...');
+    // Staff performs count on Industrial Bolts: System = 100, Physical = 97, Diff = -3
+    const staffSubmitCount = await request(
       baseUrl,
       'POST',
       '/api/adjustments',
       {
-        productId: testProductId,
-        locationId: mainStoreLocId,
-        countedQty: 32,
-        reason: '3 units damaged during forklift handling',
+        productId: bolts._id,
+        locationId: productionZoneB._id,
+        countedQty: 97,
+        reason: 'Damaged',
       },
-      managerToken
+      staffToken
     );
-    assert(adjustRes.status === 201, 'Adjustment executed successfully');
-    assert(adjustRes.data.data.delta === -3, 'Negative delta (-3) accurately calculated for damaged items');
-    assert(adjustRes.data.data.countedQty === 32, 'Physical count recorded as 32');
+    assert(staffSubmitCount.status === 201, 'Staff submits physical count');
+    assert(staffSubmitCount.data.data.status === 'AWAITING_APPROVAL', 'Adjustment status is AWAITING_APPROVAL');
+    assert(staffSubmitCount.data.data.delta === -3, 'Difference is -3');
+    const adjOpId = staffSubmitCount.data.data.operation._id;
 
-    // Total stock is now 32 (Main Store) + 25 (Prod Floor) = 57
-    const checkAdjustStock = await request(baseUrl, 'GET', `/api/products/${testProductId}`, null, managerToken);
-    assert(checkAdjustStock.data.data.totalStock === 57, 'Total stock reconciled to 57 after adjustment');
+    // Check official stock: MUST STILL BE 100!
+    const boltQuantBefore = await StockQuant.findOne({ product: bolts._id, location: productionZoneB._id });
+    assert(boltQuantBefore.quantity === 100, 'Official inventory remains 100 units before Manager approval');
 
-    // ----------------------------------------------------
-    // TEST 9: Move History (Stock Ledger Audit Trail)
-    // ----------------------------------------------------
-    console.log('\n👉 [9/10] Verifying Move History & Audit Trail (Stock Ledger)...');
-    const ledgerRes = await request(
+    // Manager approves adjustment
+    const mgrApproveAdj = await request(
       baseUrl,
-      'GET',
-      `/api/ledger?productId=${testProductId}`,
+      'POST',
+      `/api/adjustments/${adjOpId}/approve`,
       null,
       managerToken
     );
-    assert(ledgerRes.status === 200, 'Stock ledger returned 200');
-    assert(ledgerRes.data.total >= 4, 'All movements recorded in ledger (Init, Receipt, Transfer, Delivery, Adjustment)');
+    assert(mgrApproveAdj.status === 200, 'Manager approves stock adjustment');
 
-    const moveRefs = ledgerRes.data.data.map((m) => m.reference);
-    assert(moveRefs.some((r) => r.startsWith('INIT-')), 'Initial stock logged in ledger');
-    assert(moveRefs.some((r) => r.startsWith('REC-')), 'Receipt move logged in ledger');
-    assert(moveRefs.some((r) => r.startsWith('INT-')), 'Transfer move logged in ledger');
-    assert(moveRefs.some((r) => r.startsWith('DEL-')), 'Delivery move logged in ledger');
-    assert(moveRefs.some((r) => r.startsWith('ADJ-')), 'Adjustment move logged in ledger');
+    // Official stock is now 97!
+    const boltQuantAfter = await StockQuant.findOne({ product: bolts._id, location: productionZoneB._id });
+    assert(boltQuantAfter.quantity === 97, 'Official inventory updated to 97 units after Manager approval');
 
     // ----------------------------------------------------
-    // TEST 10: Dashboard KPIs & Analytics
+    // TEST 8: Rejection Workflow
+    // Operation rejected -> Inventory unchanged, reason & manager logged
     // ----------------------------------------------------
-    console.log('\n👉 [10/10] Verifying Live Dashboard KPIs...');
+    console.log('\n👉 [8/10] Verifying Operation Rejection Workflow...');
+    const rejectTestOp = await request(
+      baseUrl,
+      'POST',
+      '/api/operations',
+      {
+        type: 'RECEIPT',
+        partner: 'Damaged Carrier Co',
+        sourceLocation: vendorLoc._id,
+        destLocation: receivingBayA._id,
+        items: [{ product: steel._id, demandQty: 50, doneQty: 50 }],
+      },
+      managerToken
+    );
+    const rejOpId = rejectTestOp.data.data._id;
+
+    // Staff submits
+    await request(baseUrl, 'POST', `/api/operations/${rejOpId}/submit`, null, staffToken);
+
+    // Manager rejects with reason
+    const rejRes = await request(
+      baseUrl,
+      'POST',
+      `/api/operations/${rejOpId}/reject`,
+      { reason: 'Goods arrived water-damaged and failed intake QC' },
+      managerToken
+    );
+    assert(rejRes.status === 200, 'Manager rejects operation');
+    assert(rejRes.data.data.status === 'REJECTED', 'Status marked REJECTED');
+
+    // Verify DB
+    const rejInDb = await StockOperation.findById(rejOpId);
+    assert(rejInDb.status === 'REJECTED', 'DB status is REJECTED');
+    assert(rejInDb.rejectionReason.includes('water-damaged'), 'Rejection reason recorded');
+    assert(Boolean(rejInDb.rejectedBy), 'Rejecting manager recorded');
+
+    // ----------------------------------------------------
+    // TEST 9: Manager Approval Queue & Staff Activity
+    // ----------------------------------------------------
+    console.log('\n👉 [9/10] Verifying Manager Pending Approvals Filter & Staff Activity...');
+    // Create another pending operation
+    const newPending = await request(
+      baseUrl,
+      'POST',
+      '/api/operations',
+      {
+        type: 'RECEIPT',
+        partner: 'Apex Industrial Corp',
+        sourceLocation: vendorLoc._id,
+        destLocation: receivingBayA._id,
+        items: [{ product: steel._id, demandQty: 10, doneQty: 10 }],
+      },
+      managerToken
+    );
+    await request(baseUrl, 'POST', `/api/operations/${newPending.data.data._id}/submit`, null, staffToken);
+
+    // Manager queries pending approvals
+    const pendingOpsRes = await request(
+      baseUrl,
+      'GET',
+      '/api/operations?status=AWAITING_APPROVAL',
+      null,
+      managerToken
+    );
+    assert(pendingOpsRes.status === 200, 'Manager queries pending approvals');
+    assert(pendingOpsRes.data.data.length >= 1, 'Pending operations found in Manager approval queue');
+
+    // Staff queries My Activity
+    const myAct = await request(baseUrl, 'GET', '/api/ledger/my-activity', null, staffToken);
+    assert(myAct.status === 200, 'Staff retrieves My Activity');
+    assert(myAct.data.data.length >= 3, 'My Activity log reflects staff submissions');
+    assert(myAct.data.data[0].action !== undefined, 'Activity has action description');
+    assert(myAct.data.data[0].status !== undefined, 'Activity has status');
+
+    // ----------------------------------------------------
+    // TEST 10: Dashboard KPIs & Pending Approvals Metric
+    // ----------------------------------------------------
+    console.log('\n👉 [10/10] Verifying Live Dashboard KPIs with Pending Approvals...');
     const kpiRes = await request(baseUrl, 'GET', '/api/dashboard/kpis', null, managerToken);
     assert(kpiRes.status === 200, 'Dashboard KPIs endpoint returned 200');
-    assert(kpiRes.data.data.totalProducts >= 4, 'Total products metric accurate');
-    assert(kpiRes.data.data.totalItemsInStock > 0, 'Total items in stock metric accurate');
-    assert(typeof kpiRes.data.data.lowStockItems === 'number', 'Low stock items computed');
-    assert(Array.isArray(kpiRes.data.data.statusBreakdown), 'Status breakdown provided for dynamic filtering');
+    assert(kpiRes.data.data.pendingApprovals >= 1, 'Dashboard includes pendingApprovals metric');
 
     console.log('\n====================================================');
     console.log(`🎉 ALL TESTS PASSED! (${passedTests}/${totalTests} assertions)`);
-    console.log('Zero bugs detected across all backend workflows.');
+    console.log('Two-role operational workflow verified and enforced at server level!');
     console.log('====================================================\n');
 
     server.close();

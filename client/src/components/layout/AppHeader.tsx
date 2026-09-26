@@ -163,7 +163,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                         }}
                         className="mt-2 w-full py-1 text-center bg-white text-slate-900 border border-slate-300 rounded text-[11px] font-medium hover:bg-slate-50"
                       >
-                        + Create Receipt (Restock {alert.suggestedOrderQty})
+                        {isStaff ? 'View Assigned Receipts' : `+ Create Receipt (Restock ${alert.suggestedOrderQty})`}
                       </button>
                     </div>
                   ))}
@@ -174,14 +174,24 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         </div>
 
         {/* Primary Action Button */}
-        <button
-          type="button"
-          onClick={onOpenQuickAction}
-          className="btn-primary py-1.5 px-3 text-xs"
-        >
-          <Plus className="w-3.5 h-3.5" strokeWidth={2} />
-          <span>New Operation</span>
-        </button>
+        {isStaff ? (
+          <button
+            type="button"
+            onClick={() => onNavigate('overview')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium shadow-xs transition-colors cursor-pointer"
+          >
+            <span>My Tasks</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenQuickAction}
+            className="btn-primary py-1.5 px-3 text-xs"
+          >
+            <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+            <span>New Operation</span>
+          </button>
+        )}
       </div>
     </header>
   );
