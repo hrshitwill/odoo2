@@ -67,41 +67,66 @@ odoo2/
    - Working Directory: `client/src/pages/products/`, `operations/`, `settings/`
 
 ---
+✨ Key Features
+🔐 Authentication and OTP password reset
+📊 Real-time inventory dashboard
+📦 Product management
+🚚 Incoming and outgoing stock management
+🔄 Internal stock transfers
+🧮 Inventory adjustments
+📒 Complete stock ledger
+🚨 Low-stock alerts
+🏢 Multi-warehouse support
+🔎 SKU search
+🎯 Smart filtering
+👤 User profile management
+🎯 Expected Outcome
 
-## 🚀 Quickstart for Team Members
+StockSense aims to provide a centralized inventory platform that helps businesses:
 
-### 1. Clone the repository
-```bash
-git clone <repository_url>
-cd stocksense
-```
+Reduce manual inventory work
+Minimize stock discrepancies
+Track every stock movement
+Improve warehouse visibility
+Prevent stock shortages
+Manage multiple warehouses
+Maintain an accurate inventory history
+🎨 UI/UX Mockup
 
-### 2. Configure Environment Files
-**Server (`server/.env`):**
-```bash
-cd server
-copy .env.example .env
-```
-*(Ensure MongoDB is running locally or specify your MongoDB Atlas URI in `MONGO_URI`)*
+The application interface and workflow can be viewed in the project mockup:
 
-**Client (`client/.env`):**
-```bash
-cd ../client
-copy .env.example .env
-```
+Excalidraw Mockup:
+https://link.excalidraw.com/l/65VNwvy7c4X/3ENvQFu9o8R
 
-### 3. Install Dependencies
-From the root directory:
-```bash
-cd ..
-npm run install:all
-```
-*Or install individually in `server/` and `client/`:*
-```bash
-cd server && npm install
-cd ../client && npm install
-```
+🚀 Future Enhancements
 
-### 4. Run Development Servers
-- **Backend API:** `cd server && npm run dev` (Runs on `http://localhost:5000`)
-- **Frontend App:** `cd client && npm run dev` (Runs on `http://localhost:5173`)
+Potential future improvements include:
+
+Barcode/QR code scanning
+Supplier management
+Purchase order integration
+Sales order integration
+Automated purchase suggestions
+Advanced inventory analytics
+Export reports to Excel/PDF
+Role-based access control
+Email/SMS notifications
+Audit logs
+Mobile application
+📌 Project Summary
+
+StockSense is a centralized Inventory Management System that tracks the complete lifecycle of inventory — from receiving goods from vendors to storing, transferring, delivering, and adjusting stock.
+
+The core principle is:
+
+Every Stock Movement
+        ↓
+      Update
+        ↓
+   Stock Quantity
+        ↓
+   Stock Ledger
+        ↓
+ Complete History
+
+This provides businesses with accurate, transparent, and real-time visibility into their inventory.
