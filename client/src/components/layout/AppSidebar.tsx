@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronRight,
   Scan,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useInventory } from '@/context/InventoryContext';
@@ -32,6 +33,7 @@ export type NavigationTab =
   | 'adjustments'
   | 'move_history'
   | 'warehouse_settings'
+  | 'staff_management'
   | 'profile';
 
 interface AppSidebarProps {
@@ -143,8 +145,14 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       items: [
         {
           id: 'warehouse_settings' as NavigationTab,
-          label: 'Warehouse',
+          label: 'Facilities',
           icon: Warehouse,
+          badge: null,
+        },
+        {
+          id: 'staff_management' as NavigationTab,
+          label: 'Staff & Personnel',
+          icon: Users,
           badge: null,
         },
       ],
@@ -265,45 +273,40 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       <div className="p-3 border-t border-slate-200 bg-slate-50/70">
         <div className="flex items-center justify-between p-2 rounded bg-white border border-slate-200">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded bg-slate-800 text-white flex items-center justify-center text-xs font-mono font-medium shrink-0">
-              {currentUser.avatar || (isStaff ? 'MM' : 'AV')}
+            <div className={`w-7 h-7 rounded text-white flex items-center justify-center text-xs font-mono font-medium shrink-0 ${isStaff ? 'bg-blue-600' : 'bg-slate-900'}`}>
+              {currentUser.avatar || (isStaff ? 'ST' : 'MG')}
             </div>
             <div className="min-w-0">
               <div className="text-xs font-medium text-slate-900 truncate">
                 {currentUser.name}
               </div>
-              <div className="text-[11px] text-slate-500 truncate capitalize">
+              <div className="text-[11px] text-slate-500 truncate capitalize font-medium">
                 {isStaff ? 'Warehouse Staff' : 'Inventory Manager'}
               </div>
               <div className="text-[10px] text-slate-400 truncate font-mono">
-                {isStaff ? (currentUser.assignedWarehouseName || 'Main Central Hub') : 'All Warehouses'}
+                {isStaff ? (currentUser.assignedWarehouseName || 'Main Central Hub') : 'All Facilities'}
               </div>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              const targetRole = currentUser.role === 'inventory_manager' ? 'warehouse_staff' : 'inventory_manager';
-              switchUserRole(targetRole);
-              if (targetRole === 'warehouse_staff' && ['products', 'categories', 'reordering_rules', 'warehouse_settings'].includes(currentTab)) {
-                onSelectTab('overview');
-              }
-            }}
-            title={`Switch to ${currentUser.role === 'inventory_manager' ? 'Warehouse Staff' : 'Inventory Manager'} view`}
-            className="px-2 py-0.5 rounded text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-[11px] font-medium border border-slate-200 transition-colors"
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+              isStaff
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-orange-50 text-orange-700 border-orange-200'
+            }`}
           >
-            Role
-          </button>
+            {isStaff ? 'STAFF' : 'MGR'}
+          </span>
         </div>
 
         <button
           type="button"
           onClick={logout}
-          className="w-full mt-2 flex items-center justify-center gap-1.5 py-1 text-xs text-slate-500 hover:text-rose-600 rounded transition-colors"
+          className="w-full mt-2 flex items-center justify-center gap-1.5 py-1 text-xs text-slate-500 hover:text-rose-600 rounded transition-colors cursor-pointer"
         >
           <LogOut className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>Logout</span>
+          <span>Logout Session</span>
         </button>
       </div>
     </aside>

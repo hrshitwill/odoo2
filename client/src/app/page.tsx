@@ -16,6 +16,7 @@ import { AdjustmentsView } from '@/components/operations/AdjustmentsView';
 import { StockLedgerView } from '@/components/operations/StockLedgerView';
 import { ReorderingRulesView } from '@/components/rules/ReorderingRulesView';
 import { WarehouseSettingsView } from '@/components/settings/WarehouseSettingsView';
+import { StaffManagementView } from '@/components/settings/StaffManagementView';
 import { ProfileView } from '@/components/profile/ProfileView';
 import { QuickActionModal } from '@/components/common/QuickActionModal';
 import { BarcodeScannerModal } from '@/components/common/BarcodeScannerModal';
@@ -31,6 +32,7 @@ const MANAGER_ONLY_TABS: NavigationTab[] = [
   'categories',
   'reordering_rules',
   'warehouse_settings',
+  'staff_management',
 ];
 
 export default function StockSenseApp() {
@@ -122,6 +124,8 @@ export default function StockSenseApp() {
         return <ReorderingRulesView onNavigate={(tab) => setCurrentTab(tab)} />;
       case 'warehouse_settings':
         return <WarehouseSettingsView />;
+      case 'staff_management':
+        return <StaffManagementView />;
       case 'profile':
         return <ProfileView />;
       default:

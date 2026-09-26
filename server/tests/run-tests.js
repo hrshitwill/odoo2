@@ -155,6 +155,44 @@ const runAllTests = async () => {
     });
     assert(goodOtp.status === 200, 'Password reset successful with valid OTP');
 
+    // Test Role-Based User Provisioning: Unauthenticated register fails
+    const unauthRegister = await request(baseUrl, 'POST', '/api/auth/register', {
+      name: 'Hacker User',
+      email: 'hacker@stocksense.com',
+      password: 'password123',
+    });
+    assert(unauthRegister.status === 401 || unauthRegister.status === 403, 'Unauthenticated user creation rejected');
+
+    // Test Role-Based User Provisioning: Staff cannot create user
+    const staffRegister = await request(baseUrl, 'POST', '/api/auth/register', {
+      name: 'Staff Created User',
+      email: 'staffuser@stocksense.com',
+      password: 'password123',
+    }, staffToken);
+    assert(staffRegister.status === 403, 'Warehouse staff prevented from creating users (403)');
+
+    // Test Role-Based User Provisioning: Manager CAN create user
+    const testNewEmail = `operator_${Date.now()}@stocksense.com`;
+    const managerRegister = await request(baseUrl, 'POST', '/api/auth/register', {
+      name: 'Sam Operator',
+      email: testNewEmail,
+      password: 'operatorPass123',
+      role: 'WAREHOUSE_STAFF',
+    }, managerToken);
+    assert(managerRegister.status === 201, 'Inventory Manager successfully provisions new operator');
+
+    // Test New Operator can log in with provisioned credentials
+    const newOpLogin = await request(baseUrl, 'POST', '/api/auth/login', {
+      email: testNewEmail,
+      password: 'operatorPass123',
+    });
+    assert(newOpLogin.status === 200, 'Newly provisioned operator logs in with their credentials');
+
+    // Test Manager can list registered users
+    const usersListRes = await request(baseUrl, 'GET', '/api/auth/users', null, managerToken);
+    assert(usersListRes.status === 200, 'Manager can list registered operators');
+    assert(usersListRes.data.data.length >= 3, 'Registered operators directory populated');
+
     // ----------------------------------------------------
     // TEST 3: Locations & Warehouses
     // ----------------------------------------------------

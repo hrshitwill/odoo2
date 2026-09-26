@@ -17,7 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/common/Badge';
 
 export const ProfileView: React.FC = () => {
-  const { currentUser, switchUserRole, updateCurrentUser } = useInventory();
+  const { currentUser, updateCurrentUser } = useInventory();
   const { logout } = useAuth();
 
   const [name, setName] = useState(currentUser.name);
@@ -42,19 +42,19 @@ export const ProfileView: React.FC = () => {
           Operational Profile
         </h1>
         <p className="text-sm text-slate-600 font-sans mt-0.5">
-          Access control, assigned terminal authority, and rapid persona simulation
+          Access control, assigned terminal authority, and authenticated credentials
         </p>
       </div>
 
-      {/* Role Switcher Banner */}
-      <div className="p-5 bg-white border border-slate-200 rounded-xl shadow-xs space-y-3">
+      {/* Operational Clearance Status Card */}
+      <div className="p-5 bg-white border border-slate-200 rounded-xl shadow-xs space-y-2">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-[11px] font-sans uppercase tracking-wider text-slate-500 font-semibold">
-              Active Persona &amp; Privileges
+              Operational Role &amp; Privileges
             </div>
             <h3 className="text-base font-semibold text-slate-900 font-display mt-0.5">
-              Current Mode: {currentUser.role === 'inventory_manager' ? 'Inventory Manager' : 'Warehouse Staff'}
+              {currentUser.role === 'inventory_manager' ? 'Inventory Manager' : 'Warehouse Staff'}
             </h3>
           </div>
           <Badge variant={currentUser.role === 'inventory_manager' ? 'accent' : 'blue'}>
@@ -62,41 +62,11 @@ export const ProfileView: React.FC = () => {
           </Badge>
         </div>
 
-        <p className="text-xs text-slate-600 font-sans leading-relaxed">
-          Switch between target personas for instant role-based evaluation without logging out:
+        <p className="text-xs text-slate-500 font-sans leading-relaxed">
+          {currentUser.role === 'inventory_manager'
+            ? 'Authorized for central procurement, master catalog, reordering formulas, facility configuration, and staff personnel provisioning.'
+            : 'Authorized for warehouse floor execution: intake receipts, outbound delivery picking, internal moves, cycle counting, and barcode scanning.'}
         </p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <button
-            type="button"
-            onClick={() => switchUserRole('inventory_manager')}
-            className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
-              currentUser.role === 'inventory_manager'
-                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <div className="font-sans font-semibold text-xs">Alex Vance (Manager)</div>
-            <div className={`text-[11px] mt-1 font-sans ${currentUser.role === 'inventory_manager' ? 'text-slate-300' : 'text-slate-500'}`}>
-              Manages incoming receipts, stock valuation, reorder rules, and facility transfers.
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => switchUserRole('warehouse_staff')}
-            className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
-              currentUser.role === 'warehouse_staff'
-                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <div className="font-sans font-semibold text-xs">Marcus Miller (Floor Staff)</div>
-            <div className={`text-[11px] mt-1 font-sans ${currentUser.role === 'warehouse_staff' ? 'text-slate-300' : 'text-slate-500'}`}>
-              Executes internal transfers, picks, packs cartons, and records physical cycle counts.
-            </div>
-          </button>
-        </div>
       </div>
 
       {/* Operator Details Form */}
